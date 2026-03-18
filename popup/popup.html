@@ -2,55 +2,27 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <link rel="stylesheet" href="../shared/theme.css">
+  <link rel="stylesheet" href="../shared/container-form.css">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div id="header">
-    <h1>Containers</h1>
-    <button id="btn-options" title="Settings">&#9881;</button>
-  </div>
-
-  <div id="container-list"></div>
-
-  <!-- Save dialog (hidden by default) -->
-  <div id="save-dialog" class="hidden">
-    <h2>Save Container</h2>
-    <label>Name: <input type="text" id="save-name"></label>
-    <label>Color:
-      <select id="save-color">
-        <option value="blue">Blue</option>
-        <option value="turquoise">Turquoise</option>
-        <option value="green">Green</option>
-        <option value="yellow">Yellow</option>
-        <option value="orange">Orange</option>
-        <option value="red">Red</option>
-        <option value="pink">Pink</option>
-        <option value="purple">Purple</option>
-      </select>
-    </label>
-    <label>Icon:
-      <select id="save-icon">
-        <option value="fingerprint">Fingerprint</option>
-        <option value="briefcase">Briefcase</option>
-        <option value="dollar">Dollar</option>
-        <option value="cart">Cart</option>
-        <option value="circle">Circle</option>
-        <option value="gift">Gift</option>
-        <option value="vacation">Vacation</option>
-        <option value="food">Food</option>
-        <option value="fruit">Fruit</option>
-        <option value="pet">Pet</option>
-        <option value="tree">Tree</option>
-        <option value="chill">Chill</option>
-        <option value="fence">Fence</option>
-      </select>
-    </label>
-    <div class="dialog-buttons">
-      <button id="save-confirm">Save</button>
-      <button id="save-cancel">Cancel</button>
+    <div id="container-status"></div>
+    <div id="header-actions">
+      <button id="btn-options" title="Settings">&#9881;</button>
     </div>
   </div>
-
+  <div id="form-container"></div>
+  <div id="saved-info" class="hidden">
+    <div class="saved-message">This tab is in a saved container.</div>
+  </div>
+  <div id="no-container" class="hidden">
+    <div class="saved-message">No container (default)</div>
+  </div>
+  <script src="../shared/constants.js"></script>
+  <script src="../shared/match-pattern.js"></script>
+  <script src="../shared/container-form.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
