@@ -2,101 +2,94 @@
  * URL pattern matching with a simple, precise domain-based format.
  *
  * Format:
- *   domain.tld             → matches domain.tld and all subdomains (*.domain.tld)
- *   sub.domain.tld         → matches sub.domain.tld exactly (and its subdomains)
- *   domain.tld/path        → matches domain.tld/path* (and subdomains)
+ *   domain.tld             → matches domain.tld and all subdomains
+ *   sub.domain.tld         → matches sub.domain.tld and its subdomains
+ *   domain.tld/path        → matches domain.tld/path* and subdomains
+ *   domain.*               → matches domain with ANY TLD (amazon.com, amazon.de, amazon.co.uk)
  *
  * The rule: whatever you type as the domain, we match it and anything
- * that ends with .{your input}. No wildcards, no guessing.
+ * that ends with .{your input}. The .* suffix matches any TLD.
  */
 
 const MatchPattern = (() => {
 
-  /**
-   * Parse a friendly pattern into { domain, path }.
-   * Returns null if invalid.
-   */
   function parse(pattern) {
     if (!pattern || typeof pattern !== 'string') return null;
     let input = pattern.trim().toLowerCase();
-
-    // Strip scheme if pasted
     input = input.replace(/^https?:\/\//, '');
-    // Strip trailing slash or wildcard
     input = input.replace(/\/\*$/, '/').replace(/\/$/, '');
-
     if (!input) return null;
-
-    // Split into domain and path on first /
     const slashIdx = input.indexOf('/');
     let domain, path;
     if (slashIdx !== -1) {
       domain = input.slice(0, slashIdx);
-      path = input.slice(slashIdx); // includes leading /
+      path = input.slice(slashIdx);
     } else {
       domain = input;
       path = null;
     }
-
-    // Basic domain validation: must have at least one dot, no spaces, no wildcards
-    if (!domain || !domain.includes('.') || /\s/.test(domain) || domain.includes('*')) return null;
-
-    return { domain, path };
+    if (!domain || /\s/.test(domain)) return null;
+    if (domain.endsWith('.*')) {
+      const base = domain.slice(0, -2);
+      if (!base || base.includes('*')) return null;
+      return { domain: base, path, anyTLD: true };
+    }
+    if (!domain.includes('.') || domain.includes('*')) return null;
+    return { domain, path, anyTLD: false };
   }
 
-  /**
-   * Test whether a URL matches a pattern.
-   */
   function matches(url, pattern) {
     if (!pattern || typeof pattern !== 'string') return false;
-
     const parsed = parse(pattern);
     if (!parsed) return false;
-
     let urlObj;
-    try {
-      urlObj = new URL(url);
-    } catch {
-      return false;
-    }
-
-    // Only http/https
-    if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-      return false;
-    }
-
-    // Domain match: exact or subdomain
+    try { urlObj = new URL(url); } catch { return false; }
+    if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') return false;
     const hostname = urlObj.hostname.toLowerCase();
-    if (hostname !== parsed.domain && !hostname.endsWith('.' + parsed.domain)) {
-      return false;
+    if (parsed.anyTLD) {
+      const parts = hostname.split('.');
+      const baseIdx = parts.indexOf(parsed.domain);
+      if (baseIdx === -1) return false;
+      if (parts.length - baseIdx - 1 < 1) return false;
+    } else {
+      if (hostname !== parsed.domain && !hostname.endsWith('.' + parsed.domain)) return false;
     }
-
-    // Path match: prefix
     if (parsed.path) {
       const urlPath = urlObj.pathname + urlObj.search;
-      if (!urlPath.startsWith(parsed.path)) {
-        return false;
-      }
+      if (!urlPath.startsWith(parsed.path)) return false;
     }
-
     return true;
   }
 
-  /**
-   * Validate a pattern.
-   */
-  function isValid(pattern) {
-    return parse(pattern) !== null;
-  }
+  function isValid(pattern) { return parse(pattern) !== null; }
 
-  /**
-   * Convert a hostname to a clean domain for auto-generated rules.
-   * "www.paypal.com" → "paypal.com"
-   * Strips common prefixes like www, www2, etc.
-   */
   function domainToFriendly(hostname) {
     return hostname.replace(/^www\d*\./, '');
   }
 
-  return { matches, isValid, parse, domainToFriendly };
+  function patternsOverlap(patternA, patternB) {
+    const a = parse(patternA);
+    const b = parse(patternB);
+    if (!a || !b) return false;
+    if (!domainsOverlap(a, b)) return false;
+    if (a.path && b.path) {
+      if (!a.path.startsWith(b.path) && !b.path.startsWith(a.path)) return false;
+    }
+    return true;
+  }
+
+  function domainsOverlap(a, b) {
+    if (a.anyTLD && b.anyTLD) {
+      return a.domain === b.domain || a.domain.endsWith('.' + b.domain) || b.domain.endsWith('.' + a.domain);
+    }
+    if (a.anyTLD || b.anyTLD) {
+      const wild = a.anyTLD ? a : b;
+      const exact = a.anyTLD ? b : a;
+      const parts = exact.domain.split('.');
+      return parts.includes(wild.domain) || exact.domain === wild.domain || exact.domain.startsWith(wild.domain + '.') || exact.domain.endsWith('.' + wild.domain);
+    }
+    return a.domain === b.domain || a.domain.endsWith('.' + b.domain) || b.domain.endsWith('.' + a.domain);
+  }
+
+  return { matches, isValid, parse, domainToFriendly, patternsOverlap };
 })();
