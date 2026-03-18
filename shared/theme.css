@@ -1,0 +1,58 @@
+/* Theme variables — auto-switches with browser light/dark mode */
+
+:root {
+  /* Dark theme (default, matches Firefox dark) */
+  --bg-primary: #2b2a33;
+  --bg-secondary: #33323c;
+  --bg-tertiary: #3a3a44;
+  --bg-input: #1c1b22;
+  --bg-hover: #3a3a44;
+
+  --text-primary: #f0f0f0;
+  --text-secondary: #aaa;
+  --text-muted: #888;
+  --text-dim: #666;
+
+  --border-primary: #444;
+  --border-secondary: #3a3a44;
+  --border-input: #555;
+
+  --accent: #0060df;
+  --accent-hover: #0250bb;
+  --accent-code: #7cb7ff;
+  --accent-code-dim: #5a8abf;
+
+  --danger: #c50042;
+  --danger-hover: #a3003a;
+  --danger-text: #ff6b6b;
+  --danger-bg: #5c1a1a;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f7;
+    --bg-tertiary: #e8e8ec;
+    --bg-input: #ffffff;
+    --bg-hover: #e8e8ec;
+
+    --text-primary: #1a1a2e;
+    --text-secondary: #555;
+    --text-muted: #777;
+    --text-dim: #999;
+
+    --border-primary: #d0d0d0;
+    --border-secondary: #e0e0e4;
+    --border-input: #c0c0c0;
+
+    --accent: #0060df;
+    --accent-hover: #0042a0;
+    --accent-code: #0050c0;
+    --accent-code-dim: #4080b0;
+
+    --danger: #d70022;
+    --danger-hover: #b5001e;
+    --danger-text: #d70022;
+    --danger-bg: #ffe0e0;
+  }
+}

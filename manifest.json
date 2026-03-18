@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Container Tab Manager",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "Isolate every new tab in its own container by default, with smart URL-based sharing rules",
   "permissions": [
     "contextualIdentities",
@@ -36,5 +36,14 @@
   },
   "icons": {
     "48": "icons/icon-48.svg"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "container-tab-manager@alexeytuboltsev",
+      "strict_min_version": "109.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
   }
 }
