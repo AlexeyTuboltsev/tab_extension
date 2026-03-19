@@ -65,12 +65,43 @@ const TabInterceptor = (() => {
     }
   }
   function onTabUpdated(tabId, changeInfo) { if (!changeInfo.url) return; const info = ContainerManager.getTabInfo(tabId); if (info) info.url = changeInfo.url; }
+  function extractDomain(url) {
+    try { return new URL(url).hostname.toLowerCase(); } catch { return ''; }
+  }
+  function isDifferentDomain(urlA, urlB) {
+    const a = extractDomain(urlA);
+    const b = extractDomain(urlB);
+    if (!a || !b) return false;
+    return a !== b;
+  }
+  function onBeforeSendHeaders(details) {
+    const url = details.url;
+    const originUrl = details.originUrl;
+    if (!url || !originUrl) return {};
+    if (!RuleEngine.isSharedProvider(url)) return {};
+    if (!isDifferentDomain(url, originUrl)) return {};
+    const headers = details.requestHeaders.filter(
+      h => h.name.toLowerCase() !== 'referer'
+    );
+    return { requestHeaders: headers };
+  }
+  function onHeadersReceived(details) {
+    const url = details.url;
+    if (!url || !RuleEngine.isSharedProvider(url)) return {};
+    const headers = details.responseHeaders.filter(
+      h => h.name.toLowerCase() !== 'referrer-policy'
+    );
+    headers.push({ name: 'Referrer-Policy', value: 'no-referrer' });
+    return { responseHeaders: headers };
+  }
   function addExemptTab(tabId) { exemptTabs.add(tabId); }
   function setup() {
     browser.tabs.onCreated.addListener(onTabCreated);
     browser.tabs.onRemoved.addListener(onTabRemoved);
     browser.tabs.onUpdated.addListener(onTabUpdated);
     browser.webRequest.onBeforeRequest.addListener(onBeforeRequest, { urls: ['<all_urls>'], types: ['main_frame'] }, ['blocking']);
+    browser.webRequest.onBeforeSendHeaders.addListener(onBeforeSendHeaders, { urls: ['<all_urls>'], types: ['main_frame'] }, ['blocking', 'requestHeaders']);
+    browser.webRequest.onHeadersReceived.addListener(onHeadersReceived, { urls: ['<all_urls>'], types: ['main_frame'] }, ['blocking', 'responseHeaders']);
   }
   return { setup, addExemptTab };
 })();

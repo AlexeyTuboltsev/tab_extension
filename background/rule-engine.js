@@ -52,5 +52,8 @@ const RuleEngine = (() => {
     }
     return { action: 'NEW_EPHEMERAL' };
   }
-  return { refresh, evaluate };
+  function isSharedProvider(url) {
+    return matchesSharedProvider(url);
+  }
+  return { refresh, evaluate, isSharedProvider };
 })();
