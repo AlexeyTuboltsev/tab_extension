@@ -2,65 +2,38 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <link rel="stylesheet" href="../shared/theme.css">
+  <link rel="stylesheet" href="../shared/container-form.css">
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
   <h1>Container Tab Manager Settings</h1>
-
-  <!-- Saved Containers -->
-  <section>
-    <h2>Saved Containers</h2>
-    <table id="saved-table">
-      <thead><tr><th>Name</th><th>Color</th><th>Icon</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <p id="no-saved" class="muted">No saved containers yet. Save one from the popup.</p>
-  </section>
-
-  <!-- Global Rules -->
-  <section>
-    <h2>Global URL Rules</h2>
-    <p class="hint">Tabs matching these patterns always open in the specified container.</p>
-    <div class="pattern-help">
-      <b>Pattern examples:</b>
-      <code>amazon.com</code> &mdash; amazon.com + all subdomains &nbsp;|&nbsp;
-      <code>www.paypal.com</code> &mdash; www.paypal.com only &nbsp;|&nbsp;
-      <code>google.com/maps</code> &mdash; google.com/maps* + subdomains
-    </div>
-    <table id="global-rules-table">
-      <thead><tr><th>Domain / Pattern</th><th>Container</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <p id="no-global-rules" class="muted">No global rules defined.</p>
-    <div class="add-form">
-      <input type="text" id="global-pattern" placeholder="e.g. amazon.com or paypal.*">
-      <select id="global-container"></select>
-      <button id="add-global-rule">Add</button>
-    </div>
-    <p id="global-error" class="error hidden"></p>
-  </section>
-
-  <!-- Container-Bound Rules -->
-  <section>
-    <h2>Container-Bound Rules</h2>
-    <p class="hint">When a tab in a container opens a link matching these patterns, the new tab shares the same container (e.g., payment flows).</p>
-    <label>Container:
-      <select id="bound-container-select"></select>
-    </label>
-    <table id="bound-rules-table">
-      <thead><tr><th>Domain / Pattern</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <p id="no-bound-rules" class="muted">No rules for this container.</p>
-    <div class="add-form">
-      <input type="text" id="bound-pattern" placeholder="e.g. paypal.com or stripe.com">
-      <button id="add-bound-rule">Add</button>
-    </div>
-    <p id="bound-error" class="error hidden"></p>
-  </section>
-
+  <div id="main-view">
+    <section>
+      <h2>Saved Containers</h2>
+      <div id="saved-list"></div>
+      <p id="no-saved" class="muted">No saved containers yet. Save one from the toolbar popup.</p>
+    </section>
+    <section>
+      <h2>Shared Providers</h2>
+      <p class="hint">Payment and auth providers that always share context with the originating saved container. These apply to ALL saved containers automatically.</p>
+      <table id="providers-table">
+        <thead><tr><th>Domain / Pattern</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="add-form">
+        <input type="text" id="provider-pattern" placeholder="e.g. paypal.* or stripe.com">
+        <button id="add-provider">Add</button>
+      </div>
+      <p id="provider-error" class="error hidden"></p>
+    </section>
+  </div>
+  <div id="detail-view" class="hidden">
+    <div id="detail-form"></div>
+  </div>
   <script src="../shared/constants.js"></script>
   <script src="../shared/match-pattern.js"></script>
+  <script src="../shared/container-form.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

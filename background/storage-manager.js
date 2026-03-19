@@ -9,125 +9,22 @@ const StorageManager = (() => {
     });
     return data;
   }
-
-  async function getEphemeralContainers() {
-    const data = await browser.storage.local.get(STORAGE_KEYS.EPHEMERAL_CONTAINERS);
-    return data[STORAGE_KEYS.EPHEMERAL_CONTAINERS] || {};
-  }
-
-  async function setEphemeralContainers(containers) {
-    await browser.storage.local.set({ [STORAGE_KEYS.EPHEMERAL_CONTAINERS]: containers });
-  }
-
-  async function addEphemeralContainer(cookieStoreId) {
-    const containers = await getEphemeralContainers();
-    containers[cookieStoreId] = { createdAt: Date.now() };
-    await setEphemeralContainers(containers);
-  }
-
-  async function removeEphemeralContainer(cookieStoreId) {
-    const containers = await getEphemeralContainers();
-    delete containers[cookieStoreId];
-    await setEphemeralContainers(containers);
-  }
-
-  async function getSavedContainers() {
-    const data = await browser.storage.local.get(STORAGE_KEYS.SAVED_CONTAINERS);
-    return data[STORAGE_KEYS.SAVED_CONTAINERS] || {};
-  }
-
-  async function setSavedContainers(containers) {
-    await browser.storage.local.set({ [STORAGE_KEYS.SAVED_CONTAINERS]: containers });
-  }
-
-  async function addSavedContainer(id, container) {
-    const containers = await getSavedContainers();
-    containers[id] = container;
-    await setSavedContainers(containers);
-  }
-
-  async function removeSavedContainer(id) {
-    const containers = await getSavedContainers();
-    delete containers[id];
-    await setSavedContainers(containers);
-    const rules = await getContainerRules();
-    delete rules[id];
-    await setContainerRules(rules);
-  }
-
-  async function getGlobalRules() {
-    const data = await browser.storage.local.get(STORAGE_KEYS.GLOBAL_RULES);
-    return data[STORAGE_KEYS.GLOBAL_RULES] || [];
-  }
-
-  async function setGlobalRules(rules) {
-    await browser.storage.local.set({ [STORAGE_KEYS.GLOBAL_RULES]: rules });
-  }
-
-  async function addGlobalRule(rule) {
-    const rules = await getGlobalRules();
-    rules.push(rule);
-    await setGlobalRules(rules);
-  }
-
-  async function removeGlobalRule(ruleId) {
-    const rules = await getGlobalRules();
-    await setGlobalRules(rules.filter(r => r.id !== ruleId));
-  }
-
-  async function getContainerRules() {
-    const data = await browser.storage.local.get(STORAGE_KEYS.CONTAINER_RULES);
-    return data[STORAGE_KEYS.CONTAINER_RULES] || {};
-  }
-
-  async function setContainerRules(rules) {
-    await browser.storage.local.set({ [STORAGE_KEYS.CONTAINER_RULES]: rules });
-  }
-
-  async function addContainerRule(savedContainerId, rule) {
-    const rules = await getContainerRules();
-    if (!rules[savedContainerId]) {
-      rules[savedContainerId] = [];
-    }
-    rules[savedContainerId].push(rule);
-    await setContainerRules(rules);
-  }
-
-  async function removeContainerRule(savedContainerId, ruleId) {
-    const rules = await getContainerRules();
-    if (rules[savedContainerId]) {
-      rules[savedContainerId] = rules[savedContainerId].filter(r => r.id !== ruleId);
-      if (rules[savedContainerId].length === 0) {
-        delete rules[savedContainerId];
-      }
-      await setContainerRules(rules);
-    }
-  }
-
-  async function getNextEphemeralNumber() {
-    const data = await browser.storage.local.get(STORAGE_KEYS.EPHEMERAL_COUNTER);
-    const num = (data[STORAGE_KEYS.EPHEMERAL_COUNTER] || 0) + 1;
-    await browser.storage.local.set({ [STORAGE_KEYS.EPHEMERAL_COUNTER]: num });
-    return num;
-  }
-
-  return {
-    load,
-    getEphemeralContainers,
-    addEphemeralContainer,
-    removeEphemeralContainer,
-    getSavedContainers,
-    setSavedContainers,
-    addSavedContainer,
-    removeSavedContainer,
-    getGlobalRules,
-    setGlobalRules,
-    addGlobalRule,
-    removeGlobalRule,
-    getContainerRules,
-    setContainerRules,
-    addContainerRule,
-    removeContainerRule,
-    getNextEphemeralNumber,
-  };
+  async function getEphemeralContainers() { const d = await browser.storage.local.get(STORAGE_KEYS.EPHEMERAL_CONTAINERS); return d[STORAGE_KEYS.EPHEMERAL_CONTAINERS] || {}; }
+  async function setEphemeralContainers(c) { await browser.storage.local.set({ [STORAGE_KEYS.EPHEMERAL_CONTAINERS]: c }); }
+  async function addEphemeralContainer(id) { const c = await getEphemeralContainers(); c[id] = { createdAt: Date.now() }; await setEphemeralContainers(c); }
+  async function removeEphemeralContainer(id) { const c = await getEphemeralContainers(); delete c[id]; await setEphemeralContainers(c); }
+  async function getSavedContainers() { const d = await browser.storage.local.get(STORAGE_KEYS.SAVED_CONTAINERS); return d[STORAGE_KEYS.SAVED_CONTAINERS] || {}; }
+  async function setSavedContainers(c) { await browser.storage.local.set({ [STORAGE_KEYS.SAVED_CONTAINERS]: c }); }
+  async function addSavedContainer(id, c) { const cs = await getSavedContainers(); cs[id] = c; await setSavedContainers(cs); }
+  async function removeSavedContainer(id) { const cs = await getSavedContainers(); delete cs[id]; await setSavedContainers(cs); const r = await getContainerRules(); delete r[id]; await setContainerRules(r); }
+  async function getGlobalRules() { const d = await browser.storage.local.get(STORAGE_KEYS.GLOBAL_RULES); return d[STORAGE_KEYS.GLOBAL_RULES] || []; }
+  async function setGlobalRules(r) { await browser.storage.local.set({ [STORAGE_KEYS.GLOBAL_RULES]: r }); }
+  async function addGlobalRule(r) { const rs = await getGlobalRules(); rs.push(r); await setGlobalRules(rs); }
+  async function removeGlobalRule(id) { const rs = await getGlobalRules(); await setGlobalRules(rs.filter(r => r.id !== id)); }
+  async function getContainerRules() { const d = await browser.storage.local.get(STORAGE_KEYS.CONTAINER_RULES); return d[STORAGE_KEYS.CONTAINER_RULES] || {}; }
+  async function setContainerRules(r) { await browser.storage.local.set({ [STORAGE_KEYS.CONTAINER_RULES]: r }); }
+  async function addContainerRule(scId, r) { const rs = await getContainerRules(); if (!rs[scId]) rs[scId] = []; rs[scId].push(r); await setContainerRules(rs); }
+  async function removeContainerRule(scId, rId) { const rs = await getContainerRules(); if (rs[scId]) { rs[scId] = rs[scId].filter(r => r.id !== rId); if (rs[scId].length === 0) delete rs[scId]; await setContainerRules(rs); } }
+  async function getNextEphemeralNumber() { const d = await browser.storage.local.get(STORAGE_KEYS.EPHEMERAL_COUNTER); const n = (d[STORAGE_KEYS.EPHEMERAL_COUNTER] || 0) + 1; await browser.storage.local.set({ [STORAGE_KEYS.EPHEMERAL_COUNTER]: n }); return n; }
+  return { load, getEphemeralContainers, addEphemeralContainer, removeEphemeralContainer, getSavedContainers, setSavedContainers, addSavedContainer, removeSavedContainer, getGlobalRules, setGlobalRules, addGlobalRule, removeGlobalRule, getContainerRules, setContainerRules, addContainerRule, removeContainerRule, getNextEphemeralNumber };
 })();

@@ -1,47 +1,22 @@
-// Main entry point — initialize everything
+// Main entry point
 
 (async () => {
   try {
-    // Initialize storage-backed state and runtime tracking
     await ContainerManager.initialize();
-
-    // Migrate old-format patterns (e.g. "paypal.*" → "paypal.com")
     await migratePatterns();
-
-    // Load rules into the rule engine
     await RuleEngine.refresh();
-
-    // Set up tab interception
     TabInterceptor.setup();
-
-    // Set up context menus
     ContextMenu.setup();
-
-    // Set up address bar container indicator
     PageActionIndicator.setup();
-
-    // Refresh rules and indicators when storage changes
     browser.storage.onChanged.addListener((changes) => {
-      if (
-        changes[STORAGE_KEYS.GLOBAL_RULES] ||
-        changes[STORAGE_KEYS.CONTAINER_RULES] ||
-        changes[STORAGE_KEYS.SAVED_CONTAINERS]
-      ) {
+      if (changes[STORAGE_KEYS.GLOBAL_RULES] || changes[STORAGE_KEYS.CONTAINER_RULES] || changes[STORAGE_KEYS.SAVED_CONTAINERS] || changes[STORAGE_KEYS.SHARED_PROVIDERS]) {
         RuleEngine.refresh();
       }
-      if (
-        changes[STORAGE_KEYS.SAVED_CONTAINERS] ||
-        changes[STORAGE_KEYS.EPHEMERAL_CONTAINERS]
-      ) {
+      if (changes[STORAGE_KEYS.SAVED_CONTAINERS] || changes[STORAGE_KEYS.EPHEMERAL_CONTAINERS]) {
         PageActionIndicator.updateAllTabs();
       }
     });
-
-    // Handle messages from popup and options pages
-    browser.runtime.onMessage.addListener((message) => {
-      return handleMessage(message);
-    });
-
+    browser.runtime.onMessage.addListener((message) => handleMessage(message));
     console.log('Container Tab Manager initialized');
   } catch (e) {
     console.error('Failed to initialize Container Tab Manager:', e);
@@ -55,196 +30,144 @@ async function handleMessage(message) {
       const saved = await StorageManager.getSavedContainers();
       const globalRules = await StorageManager.getGlobalRules();
       const containerRules = await StorageManager.getContainerRules();
-      // Enrich container state with contextualIdentity info
       const identities = await browser.contextualIdentities.query({});
       const identityMap = {};
-      for (const id of identities) {
-        identityMap[id.cookieStoreId] = id;
-      }
+      for (const id of identities) identityMap[id.cookieStoreId] = id;
       for (const c of containers) {
         const identity = identityMap[c.cookieStoreId];
-        if (identity) {
-          c.name = identity.name;
-          c.color = identity.color;
-          c.icon = identity.icon;
-        }
+        if (identity) { c.name = identity.name; c.color = identity.color; c.icon = identity.icon; }
       }
       return { containers, saved, globalRules, containerRules };
     }
-
     case 'getTabsForContainer': {
-      const tabIds = ContainerManager.getState()
-        .find(c => c.cookieStoreId === message.cookieStoreId)?.tabIds || [];
+      const tabIds = ContainerManager.getState().find(c => c.cookieStoreId === message.cookieStoreId)?.tabIds || [];
       const tabs = [];
       for (const tabId of tabIds) {
-        try {
-          const tab = await browser.tabs.get(tabId);
-          tabs.push({ id: tab.id, title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl });
-        } catch (e) {
-          // Tab may have been closed
-        }
+        try { const tab = await browser.tabs.get(tabId); tabs.push({ id: tab.id, title: tab.title, url: tab.url, favIconUrl: tab.favIconUrl }); } catch (e) {}
       }
       return { tabs };
     }
-
-    case 'saveEphemeral': {
-      // Collect domains from tabs in this container BEFORE saving
-      const tabIds = ContainerManager.getState()
-        .find(c => c.cookieStoreId === message.cookieStoreId)?.tabIds || [];
+    case 'getContainerDomains': {
+      const tabIds = ContainerManager.getState().find(c => c.cookieStoreId === message.cookieStoreId)?.tabIds || [];
       const domains = new Set();
       for (const tid of tabIds) {
-        try {
-          const t = await browser.tabs.get(tid);
-          if (t.url && (t.url.startsWith('http:') || t.url.startsWith('https:'))) {
-            const hostname = new URL(t.url).hostname;
-            domains.add(hostname);
-          }
-        } catch (e) { /* tab may have closed */ }
+        try { const t = await browser.tabs.get(tid); if (t.url && (t.url.startsWith('http:') || t.url.startsWith('https:'))) domains.add(MatchPattern.domainToFriendly(new URL(t.url).hostname)); } catch (e) {}
       }
-
-      const savedId = await ContainerManager.saveEphemeral(
-        message.cookieStoreId, message.name, message.color, message.icon
-      );
-
-      // Auto-create global rules for each domain in the container
-      const autoRules = [];
+      return { domains: [...domains] };
+    }
+    case 'saveEphemeral': {
+      const savedId = await ContainerManager.saveEphemeral(message.cookieStoreId, message.name, message.color, message.icon);
       if (savedId) {
-        for (const domain of domains) {
-          const friendly = MatchPattern.domainToFriendly(domain);
-          const ruleId = 'gr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-          await StorageManager.addGlobalRule({
-            id: ruleId,
-            pattern: friendly,
-            savedContainerId: savedId,
-          });
-          autoRules.push(friendly);
+        if (message.globalPatterns) {
+          for (const pattern of message.globalPatterns) {
+            await StorageManager.addGlobalRule({ id: 'gr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), pattern, savedContainerId: savedId });
+          }
+        }
+        if (message.boundPatterns) {
+          for (const pattern of message.boundPatterns) {
+            await StorageManager.addContainerRule(savedId, { id: 'cr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), pattern });
+          }
         }
       }
-
-      // Refresh indicator for all tabs in this container
       PageActionIndicator.updateAllTabs();
-
-      return { savedId, autoRules };
+      return { savedId };
     }
-
     case 'addGlobalRule': {
       const id = 'gr_' + Date.now();
-      await StorageManager.addGlobalRule({
-        id,
-        pattern: message.pattern,
-        savedContainerId: message.savedContainerId,
-      });
+      await StorageManager.addGlobalRule({ id, pattern: message.pattern, savedContainerId: message.savedContainerId });
       return { id };
     }
-
-    case 'removeGlobalRule': {
-      await StorageManager.removeGlobalRule(message.ruleId);
-      return {};
-    }
-
+    case 'removeGlobalRule': { await StorageManager.removeGlobalRule(message.ruleId); return {}; }
     case 'addContainerRule': {
       const id = 'cr_' + Date.now();
-      await StorageManager.addContainerRule(message.savedContainerId, {
-        id,
-        pattern: message.pattern,
-      });
+      await StorageManager.addContainerRule(message.savedContainerId, { id, pattern: message.pattern });
       return { id };
     }
-
-    case 'removeContainerRule': {
-      await StorageManager.removeContainerRule(message.savedContainerId, message.ruleId);
+    case 'removeContainerRule': { await StorageManager.removeContainerRule(message.savedContainerId, message.ruleId); return {}; }
+    case 'updateContainerRules': {
+      const allGlobal = await StorageManager.getGlobalRules();
+      const filteredGlobal = allGlobal.filter(r => r.savedContainerId !== message.savedContainerId);
+      for (const pattern of (message.globalPatterns || [])) {
+        filteredGlobal.push({ id: 'gr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), pattern, savedContainerId: message.savedContainerId });
+      }
+      await StorageManager.setGlobalRules(filteredGlobal);
+      const allBound = await StorageManager.getContainerRules();
+      allBound[message.savedContainerId] = (message.boundPatterns || []).map(pattern => ({ id: 'cr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), pattern }));
+      if (allBound[message.savedContainerId].length === 0) delete allBound[message.savedContainerId];
+      await StorageManager.setContainerRules(allBound);
+      if (message.name || message.color || message.icon) {
+        const saved = await StorageManager.getSavedContainers();
+        if (saved[message.savedContainerId]) {
+          if (message.name) saved[message.savedContainerId].name = message.name;
+          if (message.color) saved[message.savedContainerId].color = message.color;
+          if (message.icon) saved[message.savedContainerId].icon = message.icon;
+          await StorageManager.setSavedContainers(saved);
+        }
+      }
       return {};
     }
-
     case 'removeSavedContainer': {
+      const saved = await StorageManager.getSavedContainers();
+      const sc = saved[message.savedContainerId];
+      if (sc) {
+        const tabs = await browser.tabs.query({ cookieStoreId: sc.cookieStoreId });
+        for (const tab of tabs) await browser.tabs.remove(tab.id).catch(() => {});
+        if (message.clearData) {
+          const cookies = await browser.cookies.getAll({ storeId: sc.cookieStoreId });
+          for (const cookie of cookies) {
+            const url = `http${cookie.secure ? 's' : ''}://${cookie.domain.replace(/^\./, '')}${cookie.path}`;
+            await browser.cookies.remove({ url, name: cookie.name, storeId: sc.cookieStoreId }).catch(() => {});
+          }
+        }
+        await browser.contextualIdentities.remove(sc.cookieStoreId).catch(() => {});
+      }
       await StorageManager.removeSavedContainer(message.savedContainerId);
       return {};
     }
-
     case 'switchToTab': {
       await browser.tabs.update(message.tabId, { active: true });
       const tab = await browser.tabs.get(message.tabId);
       await browser.windows.update(tab.windowId, { focused: true });
       return {};
     }
-
-    default:
-      console.warn('Unknown message type:', message.type);
-      return {};
+    default: console.warn('Unknown message type:', message.type); return {};
   }
 }
 
-/**
- * Migrate old-format patterns that no longer match.
- * e.g., "paypal.*" (wildcard TLD, removed) → "paypal.com"
- * Attempts to fix by looking at tabs currently in the saved container.
- * If no tabs, strips the .* and appends .com as best guess.
- */
 async function migratePatterns() {
   const globalRules = await StorageManager.getGlobalRules();
   const saved = await StorageManager.getSavedContainers();
   let changed = false;
-
   for (const rule of globalRules) {
     if (!MatchPattern.isValid(rule.pattern)) {
       const oldPattern = rule.pattern;
       let newPattern = null;
-
-      // "paypal.*" → try to find actual domain from tabs in the container
       if (oldPattern.endsWith('.*')) {
         const base = oldPattern.slice(0, -2);
         const sc = saved[rule.savedContainerId];
         if (sc) {
-          // Look for tabs in this container to get real domain
           const tabs = await browser.tabs.query({ cookieStoreId: sc.cookieStoreId });
           for (const tab of tabs) {
             if (tab.url && tab.url.startsWith('http')) {
-              try {
-                const hostname = new URL(tab.url).hostname.replace(/^www\d*\./, '');
-                if (hostname.startsWith(base + '.')) {
-                  newPattern = hostname;
-                  break;
-                }
-              } catch (e) { /* skip */ }
+              try { const h = new URL(tab.url).hostname.replace(/^www\d*\./, ''); if (h.startsWith(base + '.')) { newPattern = h; break; } } catch (e) {}
             }
           }
         }
-        // Fallback: best guess
-        if (!newPattern) {
-          newPattern = base + '.com';
-        }
+        if (!newPattern) newPattern = base + '.com';
       }
-
-      if (newPattern && MatchPattern.isValid(newPattern)) {
-        console.log(`[Migration] "${oldPattern}" \u2192 "${newPattern}"`);
-        rule.pattern = newPattern;
-        changed = true;
-      } else {
-        console.warn(`[Migration] Could not fix invalid pattern: "${oldPattern}"`);
-      }
+      if (newPattern && MatchPattern.isValid(newPattern)) { console.log(`[Migration] "${oldPattern}" \u2192 "${newPattern}"`); rule.pattern = newPattern; changed = true; }
+      else console.warn(`[Migration] Could not fix: "${oldPattern}"`);
     }
   }
-
-  if (changed) {
-    await StorageManager.setGlobalRules(globalRules);
-  }
-
-  // Same for container-bound rules
+  if (changed) await StorageManager.setGlobalRules(globalRules);
   const containerRules = await StorageManager.getContainerRules();
   let boundChanged = false;
-  for (const [scId, rules] of Object.entries(containerRules)) {
+  for (const [, rules] of Object.entries(containerRules)) {
     for (const rule of rules) {
-      if (!MatchPattern.isValid(rule.pattern)) {
-        const oldPattern = rule.pattern;
-        if (oldPattern.endsWith('.*')) {
-          rule.pattern = oldPattern.slice(0, -2) + '.com';
-          console.log(`[Migration] Bound rule "${oldPattern}" \u2192 "${rule.pattern}"`);
-          boundChanged = true;
-        }
+      if (!MatchPattern.isValid(rule.pattern) && rule.pattern.endsWith('.*')) {
+        rule.pattern = rule.pattern.slice(0, -2) + '.com'; boundChanged = true;
       }
     }
   }
-  if (boundChanged) {
-    await StorageManager.setContainerRules(containerRules);
-  }
+  if (boundChanged) await StorageManager.setContainerRules(containerRules);
 }

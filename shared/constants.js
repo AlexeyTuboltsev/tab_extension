@@ -3,6 +3,7 @@ const STORAGE_KEYS = {
   SAVED_CONTAINERS: 'savedContainers',
   GLOBAL_RULES: 'globalRules',
   CONTAINER_RULES: 'containerRules',
+  SHARED_PROVIDERS: 'sharedProviders',
   EPHEMERAL_COUNTER: 'ephemeralCounter',
 };
 

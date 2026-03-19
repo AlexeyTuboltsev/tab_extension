@@ -21,6 +21,7 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+*.xpi
 
 # Firecrawl
 .firecrawl/
