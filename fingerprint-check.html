@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fingerprint Test Page — Container Tab Manager</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #fff; color: #222; padding: 32px 24px; max-width: 900px; margin: 0 auto;
+    line-height: 1.5;
+  }
+  h1 { font-size: 22px; margin-bottom: 6px; }
+  .subtitle { color: #666; font-size: 13px; margin-bottom: 24px; }
+
+  /* Combined hash banner */
+  .combined-hash {
+    background: #f5f5f5; border: 1px solid #ddd; border-radius: 8px;
+    padding: 16px 20px; margin-bottom: 28px; display: flex;
+    align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .combined-hash .hash-color {
+    width: 40px; height: 40px; border-radius: 6px; border: 1px solid #ccc; flex-shrink: 0;
+  }
+  .combined-hash .hash-text {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 14px; word-break: break-all; flex: 1;
+  }
+  .combined-hash .hash-label { font-weight: 600; font-size: 13px; color: #444; }
+
+  /* Copy button */
+  .copy-btn {
+    background: #0060df; color: #fff; border: none; border-radius: 6px;
+    padding: 8px 18px; font-size: 13px; cursor: pointer; font-weight: 500;
+    margin-left: auto;
+  }
+  .copy-btn:hover { background: #004ebc; }
+  .copy-btn.copied { background: #12874a; }
+
+  /* Sections */
+  .section { margin-bottom: 28px; }
+  .section-header {
+    font-size: 14px; font-weight: 700; color: #0060df; text-transform: uppercase;
+    letter-spacing: 0.5px; padding-bottom: 8px; border-bottom: 2px solid #e0e0e0;
+    margin-bottom: 0;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  tr { border-bottom: 1px solid #eee; }
+  tr:last-child { border-bottom: none; }
+  td { padding: 7px 10px; font-size: 13px; vertical-align: top; }
+  td:first-child {
+    color: #555; width: 240px; font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 12px; white-space: nowrap;
+  }
+  td:last-child { word-break: break-all; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
+
+  /* Canvas displays */
+  .canvas-row { display: flex; align-items: center; gap: 12px; margin: 8px 10px; }
+  .canvas-row canvas { border: 1px solid #ddd; border-radius: 4px; }
+
+  /* Hash color block inline */
+  .hash-color-inline {
+    display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+    border: 1px solid #ccc; vertical-align: middle; margin-right: 6px;
+  }
+
+  /* Font list */
+  .font-list { font-size: 11px; line-height: 1.8; }
+  .font-detected { color: #12874a; font-weight: 600; }
+  .font-not-detected { color: #bbb; }
+</style>
+</head>
+<body>
+
+<h1>Browser Fingerprint Signals</h1>
+<p class="subtitle">Open this page in different containers to compare fingerprints. All tests run client-side.</p>
+
+<div class="combined-hash" id="combinedHashBanner">
+  <div class="hash-color" id="combinedColor"></div>
+  <div>
+    <div class="hash-label">Combined Fingerprint Hash</div>
+    <div class="hash-text" id="combinedHash">Computing...</div>
+  </div>
+  <button class="copy-btn" id="copyBtn" onclick="copyResults()">Copy Results</button>
+</div>
+
+<div id="sections"></div>
+
+<script>
+// ── Utility: simple hash (djb2 variant, returns hex string) ──
+function hashString(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(16, '0');
+}
+
+function hashToColor(hash) {
+  return '#' + hash.slice(0, 6);
+}
+
+// ── Collect all results ──
+const allResults = {};
+const sectionOrder = [];
+const container = document.getElementById('sections');
+
+function createSection(name) {
+  sectionOrder.push(name);
+  allResults[name] = {};
+  const div = document.createElement('div');
+  div.className = 'section';
+  div.id = 'section-' + name.replace(/\s+/g, '-');
+  const h = document.createElement('div');
+  h.className = 'section-header';
+  h.textContent = name;
+  div.appendChild(h);
+  const tbl = document.createElement('table');
+  div.appendChild(tbl);
+  container.appendChild(div);
+  return { div, tbl };
+}
+
+function addRow(tbl, label, value, sectionName) {
+  allResults[sectionName][label] = value;
+  const tr = document.createElement('tr');
+  const td1 = document.createElement('td');
+  td1.textContent = label;
+  const td2 = document.createElement('td');
+  td2.textContent = String(value);
+  tr.appendChild(td1);
+  tr.appendChild(td2);
+  tbl.appendChild(tr);
+}
+
+function addRowHTML(tbl, label, html, value, sectionName) {
+  allResults[sectionName][label] = value;
+  const tr = document.createElement('tr');
+  const td1 = document.createElement('td');
+  td1.textContent = label;
+  const td2 = document.createElement('td');
+  td2.innerHTML = html;
+  tr.appendChild(td1);
+  tr.appendChild(td2);
+  tbl.appendChild(tr);
+}
+
+// ══════════════════════════════════════════
+// 1. TIMEZONE & LOCALE
+// ══════════════════════════════════════════
+(function() {
+  const sec = createSection('Timezone & Locale');
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const offset = new Date().getTimezoneOffset();
+  const lang = navigator.language;
+  const langs = navigator.languages.join(', ');
+  addRow(sec.tbl, 'Intl.DateTimeFormat().resolvedOptions().timeZone', tz, sec.div.id.replace('section-',''));
+  addRow(sec.tbl, 'new Date().getTimezoneOffset()', offset, 'Timezone & Locale');
+  addRow(sec.tbl, 'navigator.language', lang, 'Timezone & Locale');
+  addRow(sec.tbl, 'navigator.languages', langs, 'Timezone & Locale');
+})();
+
+// ══════════════════════════════════════════
+// 2. NAVIGATOR
+// ══════════════════════════════════════════
+(function() {
+  const sec = createSection('Navigator');
+  const n = 'Navigator';
+  addRow(sec.tbl, 'navigator.userAgent', navigator.userAgent, n);
+  addRow(sec.tbl, 'navigator.platform', navigator.platform, n);
+  addRow(sec.tbl, 'navigator.hardwareConcurrency', navigator.hardwareConcurrency, n);
+  addRow(sec.tbl, 'navigator.deviceMemory', navigator.deviceMemory !== undefined ? navigator.deviceMemory : 'undefined', n);
+  addRow(sec.tbl, 'navigator.doNotTrack', navigator.doNotTrack, n);
+  addRow(sec.tbl, 'navigator.cookieEnabled', navigator.cookieEnabled, n);
+  addRow(sec.tbl, 'navigator.maxTouchPoints', navigator.maxTouchPoints, n);
+})();
+
+// ══════════════════════════════════════════
+// 3. SCREEN
+// ══════════════════════════════════════════
+(function() {
+  const sec = createSection('Screen');
+  const n = 'Screen';
+  addRow(sec.tbl, 'screen.width x screen.height', screen.width + ' x ' + screen.height, n);
+  addRow(sec.tbl, 'screen.availWidth x screen.availHeight', screen.availWidth + ' x ' + screen.availHeight, n);
+  addRow(sec.tbl, 'screen.colorDepth', screen.colorDepth, n);
+  addRow(sec.tbl, 'window.devicePixelRatio', window.devicePixelRatio, n);
+  addRow(sec.tbl, 'window.innerWidth x window.innerHeight', window.innerWidth + ' x ' + window.innerHeight, n);
+})();
+
+// ══════════════════════════════════════════
+// 4. CANVAS FINGERPRINT
+// ══════════════════════════════════════════
+(function() {
+  const sec = createSection('Canvas Fingerprint');
+  const n = 'Canvas Fingerprint';
+  try {
+    const c = document.createElement('canvas');
+    c.width = 280; c.height = 60;
+    const ctx = c.getContext('2d');
+
+    // Background
+    ctx.fillStyle = '#f0f0f0';
+    ctx.fillRect(0, 0, 280, 60);
+
+    // Gradient
+    const grad = ctx.createLinearGradient(0, 0, 280, 0);
+    grad.addColorStop(0, '#ff6600');
+    grad.addColorStop(0.5, '#0066ff');
+    grad.addColorStop(1, '#00cc44');
+    ctx.fillStyle = grad;
+    ctx.fillRect(10, 5, 260, 20);
+
+    // Shapes
+    ctx.fillStyle = 'rgba(255, 0, 128, 0.7)';
+    ctx.beginPath();
+    ctx.arc(40, 42, 14, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(0, 128, 255, 0.5)';
+    ctx.fillRect(60, 28, 30, 28);
+
+    // Triangle
+    ctx.fillStyle = 'rgba(255, 200, 0, 0.6)';
+    ctx.beginPath();
+    ctx.moveTo(100, 28);
+    ctx.lineTo(130, 56);
+    ctx.lineTo(70, 56);
+    ctx.closePath();
+    ctx.fill();
+
+    // Text with various styles
+    ctx.fillStyle = '#222';
+    ctx.font = 'bold 11px Arial';
+    ctx.fillText('Cwm fjord bank', 140, 40);
+    ctx.font = 'italic 10px Georgia';
+    ctx.fillText('glyphs vext quiz', 140, 54);
+
+    // Emoji (helps detect rendering differences)
+    ctx.font = '16px serif';
+    ctx.fillText('\u{1F30D}\u{1F4BB}', 248, 52);
+
+    const dataUrl = c.toDataURL();
+    const last40 = dataUrl.slice(-40);
+    const canvasHash = hashString(dataUrl);
+    const color = hashToColor(canvasHash);
+
+    // Show the canvas
+    const row = document.createElement('tr');
+    const td1 = document.createElement('td');
+    td1.textContent = 'Test pattern';
+    const td2 = document.createElement('td');
+    td2.appendChild(c);
+    row.appendChild(td1); row.appendChild(td2);
+    sec.tbl.appendChild(row);
+    allResults[n]['Test pattern'] = '[canvas rendered]';
+
+    addRowHTML(sec.tbl, 'toDataURL() hash (last 40)',
+      '<span class="hash-color-inline" style="background:' + color + '"></span>' + last40,
+      last40, n);
+    addRow(sec.tbl, 'Full hash', canvasHash, n);
+  } catch(e) {
+    addRow(sec.tbl, 'Canvas', 'blocked: ' + e.message, n);
+  }
+})();
+
+// ══════════════════════════════════════════
+// 5. WEBGL
+// ══════════════════════════════════════════
+(function() {
+  const sec = createSection('WebGL');
+  const n = 'WebGL';
+  try {
+    const c = document.createElement('canvas');
+    c.width = 200; c.height = 100;
+    const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+    if (!gl) { addRow(sec.tbl, 'WebGL', 'not available', n); return; }
+
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    const vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : 'hidden/unavailable';
+    const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'hidden/unavailable';
+    const version = gl.getParameter(gl.VERSION);
+
+    addRow(sec.tbl, 'UNMASKED_VENDOR_WEBGL', vendor, n);
+    addRow(sec.tbl, 'UNMASKED_RENDERER_WEBGL', renderer, n);
+    addRow(sec.tbl, 'WebGL version', version, n);
+
+    // Draw a simple scene
+    gl.clearColor(0.2, 0.4, 0.6, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // Simple triangle
+    const vShaderSrc = 'attribute vec2 p;void main(){gl_Position=vec4(p,0,1);}';
+    const fShaderSrc = 'precision mediump float;void main(){gl_FragColor=vec4(0.9,0.3,0.1,1);}';
+    const vs = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vs, vShaderSrc); gl.compileShader(vs);
+    const fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fs, fShaderSrc); gl.compileShader(fs);
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs); gl.attachShader(prog, fs);
+    gl.linkProgram(prog); gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0.5, -0.5,-0.5, 0.5,-0.5]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    // Read pixels and hash
+    const pixels = new Uint8Array(c.width * c.height * 4);
+    gl.readPixels(0, 0, c.width, c.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    const pixelStr = Array.from(pixels.slice(0, 2000)).join(',');
+    const glHash = hashString(pixelStr);
+    const glColor = hashToColor(glHash);
+
+    // Show the WebGL canvas
+    const row = document.createElement('tr');
+    const td1 = document.createElement('td');
+    td1.textContent = 'WebGL scene';
+    const td2 = document.createElement('td');
+    td2.appendChild(c);
+    row.appendChild(td1); row.appendChild(td2);
+    sec.tbl.appendChild(row);
+    allResults[n]['WebGL scene'] = '[webgl rendered]';
+
+    addRowHTML(sec.tbl, 'Pixel hash',
+      '<span class="hash-color-inline" style="background:' + glColor + '"></span>' + glHash,
+      glHash, n);
+  } catch(e) {
+    addRow(sec.tbl, 'WebGL', 'blocked: ' + e.message, n);
+  }
+})();
+
+// ══════════════════════════════════════════
+// 6. AUDIOCONTEXT
+// ══════════════════════════════════════════
+(function() {
+  const sec = createSection('AudioContext');
+  const n = 'AudioContext';
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    addRow(sec.tbl, 'Sample rate', ac.sampleRate, n);
+
+    // Create oscillator -> compressor -> analyser pipeline
+    const osc = ac.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(10000, ac.currentTime);
+
+    const comp = ac.createDynamicsCompressor();
+    comp.threshold.setValueAtTime(-50, ac.currentTime);
+    comp.knee.setValueAtTime(40, ac.currentTime);
+    comp.ratio.setValueAtTime(12, ac.currentTime);
+    comp.attack.setValueAtTime(0, ac.currentTime);
+    comp.release.setValueAtTime(0.25, ac.currentTime);
+
+    const analyser = ac.createAnalyser();
+    analyser.fftSize = 256;
+
+    osc.connect(comp);
+    comp.connect(analyser);
+    // Do not connect to destination (no sound)
+    analyser.connect(ac.createGain()); // silent sink
+
+    osc.start(0);
+
+    // Render a short offline context for fingerprinting
+    const offlineCtx = new OfflineAudioContext(1, 4410, 44100);
+    const offOsc = offlineCtx.createOscillator();
+    offOsc.type = 'triangle';
+    offOsc.frequency.setValueAtTime(10000, offlineCtx.currentTime);
+    const offComp = offlineCtx.createDynamicsCompressor();
+    offComp.threshold.setValueAtTime(-50, offlineCtx.currentTime);
+    offComp.knee.setValueAtTime(40, offlineCtx.currentTime);
+    offComp.ratio.setValueAtTime(12, offlineCtx.currentTime);
+    offComp.attack.setValueAtTime(0, offlineCtx.currentTime);
+    offComp.release.setValueAtTime(0.25, offlineCtx.currentTime);
+    offOsc.connect(offComp);
+    offComp.connect(offlineCtx.destination);
+    offOsc.start(0);
+
+    offlineCtx.startRendering().then(function(buffer) {
+      const data = buffer.getChannelData(0);
+      // Take a slice and hash
+      const slice = Array.from(data.slice(4000, 4100)).map(v => v.toFixed(6)).join(',');
+      const audioHash = hashString(slice);
+      const audioColor = hashToColor(audioHash);
+      addRowHTML(sec.tbl, 'Audio fingerprint hash',
+        '<span class="hash-color-inline" style="background:' + audioColor + '"></span>' + audioHash,
+        audioHash, n);
+      osc.stop();
+      ac.close();
+      updateCombinedHash();
+    }).catch(function(e) {
+      addRow(sec.tbl, 'Audio fingerprint', 'error: ' + e.message, n);
+      ac.close();
+      updateCombinedHash();
+    });
+  } catch(e) {
+    addRow(sec.tbl, 'AudioContext', 'blocked: ' + e.message, n);
+  }
+})();
+
+// ══════════════════════════════════════════
+// 7. FONTS
+// ══════════════════════════════════════════
+(function() {
+  const sec = createSection('Fonts');
+  const n = 'Fonts';
+
+  const fontList = [
+    'Andale Mono', 'AppleGothic', 'Arial', 'Arial Black', 'Arial Hebrew',
+    'Arial MT', 'Arial Narrow', 'Arial Rounded MT Bold', 'Arial Unicode MS',
+    'Bitstream Vera Sans Mono', 'Book Antiqua', 'Bookman Old Style',
+    'Calibri', 'Cambria', 'Cambria Math', 'Century', 'Century Gothic',
+    'Century Schoolbook', 'Comic Sans', 'Comic Sans MS', 'Consolas',
+    'Courier', 'Courier New', 'Garamond', 'Geneva', 'Georgia', 'Helvetica',
+    'Helvetica Neue', 'Impact', 'Lucida Bright', 'Lucida Calligraphy',
+    'Lucida Console', 'Lucida Fax', 'LUCIDA GRANDE', 'Lucida Handwriting',
+    'Lucida Sans', 'Lucida Sans Typewriter', 'Lucida Sans Unicode',
+    'Microsoft Sans Serif', 'Monaco', 'Monotype Corsiva', 'MS Gothic',
+    'MS Outlook', 'MS PGothic', 'MS Reference Sans Serif', 'MS Sans Serif',
+    'MS Serif', 'MYRIAD', 'MYRIAD PRO', 'Palatino', 'Palatino Linotype',
+    'Segoe Print', 'Segoe Script', 'Segoe UI', 'Segoe UI Light',
+    'Segoe UI Semibold', 'Segoe UI Symbol', 'Tahoma', 'Times',
+    'Times New Roman', 'Times New Roman PS', 'Trebuchet MS',
+    'Verdana', 'Wingdings', 'Wingdings 2', 'Wingdings 3'
+  ];
+
+  const baseFonts = ['monospace', 'serif', 'sans-serif'];
+  const testString = 'mmmmmmmmmmlli';
+  const testSize = '72px';
+
+  // Measure base widths
+  const span = document.createElement('span');
+  span.style.position = 'absolute';
+  span.style.left = '-9999px';
+  span.style.top = '-9999px';
+  span.style.fontSize = testSize;
+  span.style.lineHeight = 'normal';
+  span.textContent = testString;
+  document.body.appendChild(span);
+
+  const baseWidths = {};
+  const baseHeights = {};
+  for (const base of baseFonts) {
+    span.style.fontFamily = base;
+    baseWidths[base] = span.offsetWidth;
+    baseHeights[base] = span.offsetHeight;
+  }
+
+  const detected = [];
+  for (const font of fontList) {
+    let found = false;
+    for (const base of baseFonts) {
+      span.style.fontFamily = '"' + font + '",' + base;
+      if (span.offsetWidth !== baseWidths[base] || span.offsetHeight !== baseHeights[base]) {
+        found = true;
+        break;
+      }
+    }
+    if (found) detected.push(font);
+  }
+  document.body.removeChild(span);
+
+  addRow(sec.tbl, 'Fonts detected', detected.length + ' / ' + fontList.length, n);
+
+  const fontListHash = hashString(detected.join(','));
+  const fontColor = hashToColor(fontListHash);
+  addRowHTML(sec.tbl, 'Font list hash',
+    '<span class="hash-color-inline" style="background:' + fontColor + '"></span>' + fontListHash,
+    fontListHash, n);
+
+  // Show font list
+  const tr = document.createElement('tr');
+  const td1 = document.createElement('td');
+  td1.textContent = 'Font list';
+  const td2 = document.createElement('td');
+  td2.className = 'font-list';
+  const parts = fontList.map(function(f) {
+    const isDetected = detected.indexOf(f) !== -1;
+    return '<span class="' + (isDetected ? 'font-detected' : 'font-not-detected') + '">' +
+      f + '</span>';
+  });
+  td2.innerHTML = parts.join(', ');
+  tr.appendChild(td1); tr.appendChild(td2);
+  sec.tbl.appendChild(tr);
+  allResults[n]['Font list (detected)'] = detected.join(', ');
+})();
+
+// ══════════════════════════════════════════
+// 8. STORAGE
+// ══════════════════════════════════════════
+(function() {
+  const sec = createSection('Storage');
+  const n = 'Storage';
+  let lsAvail = false;
+  try { localStorage.setItem('__fp_test', '1'); localStorage.removeItem('__fp_test'); lsAvail = true; } catch(e) {}
+  addRow(sec.tbl, 'localStorage', lsAvail ? 'available' : 'blocked', n);
+
+  let ssAvail = false;
+  try { sessionStorage.setItem('__fp_test', '1'); sessionStorage.removeItem('__fp_test'); ssAvail = true; } catch(e) {}
+  addRow(sec.tbl, 'sessionStorage', ssAvail ? 'available' : 'blocked', n);
+
+  addRow(sec.tbl, 'IndexedDB', typeof indexedDB !== 'undefined' ? 'available' : 'blocked/undefined', n);
+})();
+
+// ══════════════════════════════════════════
+// 9. PERFORMANCE TIMING
+// ══════════════════════════════════════════
+(function() {
+  const sec = createSection('Performance');
+  const n = 'Performance';
+  const samples = [];
+  for (let i = 0; i < 200; i++) samples.push(performance.now());
+  const diffs = samples.slice(1).map(function(v, i) { return v - samples[i]; }).filter(function(d) { return d > 0; });
+  const precision = diffs.length > 0 ? Math.min.apply(null, diffs).toFixed(6) + ' ms' : 'too coarse to measure';
+  addRow(sec.tbl, 'performance.now() precision', precision, n);
+})();
+
+// ══════════════════════════════════════════
+// COMBINED HASH
+// ══════════════════════════════════════════
+function updateCombinedHash() {
+  const allStr = JSON.stringify(allResults);
+  const combined = hashString(allStr);
+  const color = hashToColor(combined);
+  document.getElementById('combinedHash').textContent = combined;
+  document.getElementById('combinedColor').style.backgroundColor = color;
+}
+
+// Initial compute (audio will call again after async completes)
+updateCombinedHash();
+
+// ══════════════════════════════════════════
+// COPY RESULTS
+// ══════════════════════════════════════════
+function copyResults() {
+  const output = JSON.stringify(allResults, null, 2);
+  navigator.clipboard.writeText(output).then(function() {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = 'Copy Results'; btn.classList.remove('copied'); }, 2000);
+  }).catch(function() {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = JSON.stringify(allResults, null, 2);
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = 'Copy Results'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+</script>
+</body>
+</html>
