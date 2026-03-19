@@ -10,6 +10,7 @@ const TabInterceptor = (() => {
   }
   function onBeforeRequest(details) {
     if (details.tabId === -1) return {};
+    if (details.incognito) return {};
     if (exemptTabs.has(details.tabId)) { exemptTabs.delete(details.tabId); return {}; }
     if (processingTabs.has(details.tabId)) return {};
     const url = details.url;
@@ -54,6 +55,7 @@ const TabInterceptor = (() => {
     } catch (e) {} finally { processingTabs.delete(tabId); }
   }
   function onTabCreated(tab) {
+    if (tab.incognito) return;
     if (ContainerManager.isMoving(tab.id) || ContainerManager.isManaged(tab.id)) { ContainerManager.clearManaged(tab.id); return; }
     ContainerManager.trackTab(tab.id, tab.cookieStoreId, tab.openerTabId, tab.url || '');
   }
