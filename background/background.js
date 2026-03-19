@@ -16,15 +16,33 @@
         PageActionIndicator.updateAllTabs();
       }
     });
-    browser.runtime.onMessage.addListener((message) => handleMessage(message));
+    browser.runtime.onMessage.addListener((message, sender) => handleMessage(message, sender));
     console.log('Container Tab Manager initialized');
   } catch (e) {
     console.error('Failed to initialize Container Tab Manager:', e);
   }
 })();
 
-async function handleMessage(message) {
+function hashString(str) {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash);
+}
+
+async function handleMessage(message, sender) {
   switch (message.type) {
+    case 'getSeed': {
+      if (sender && sender.tab && sender.tab.cookieStoreId) {
+        const id = sender.tab.cookieStoreId;
+        // No noise for the default (non-container) context
+        if (id === 'firefox-default') return { seed: 0 };
+        return { seed: hashString(id) };
+      }
+      return { seed: 0 };
+    }
     case 'getState': {
       const containers = ContainerManager.getState();
       const saved = await StorageManager.getSavedContainers();
