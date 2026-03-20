@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fingerprint Test Suite</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #fff; color: #222; padding: 24px; max-width: 960px; margin: 0 auto;
+    line-height: 1.5;
+  }
+  h1 { color: #0060df; margin-bottom: 8px; font-size: 24px; }
+  h2 { color: #0060df; margin: 24px 0 12px; font-size: 18px; border-bottom: 2px solid #0060df; padding-bottom: 4px; }
+  .summary {
+    background: #f0f6ff; border: 1px solid #0060df; border-radius: 6px;
+    padding: 16px; margin: 16px 0; display: flex; align-items: center; gap: 16px;
+  }
+  .hash-block {
+    width: 48px; height: 48px; border-radius: 6px; flex-shrink: 0;
+    border: 1px solid #ccc;
+  }
+  .hash-text { font-family: monospace; font-size: 14px; word-break: break-all; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th { text-align: left; padding: 6px 10px; background: #f5f5f5; border-bottom: 2px solid #ddd; font-size: 13px; }
+  td { padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 13px; }
+  td.key { font-weight: 600; width: 260px; }
+  td.value { font-family: monospace; word-break: break-all; }
+  td.changed { background: #e6ffe6; }
+  td.unchanged { background: #fff; }
+  .btn {
+    display: inline-block; padding: 8px 16px; background: #0060df; color: #fff;
+    border: none; border-radius: 4px; cursor: pointer; font-size: 13px; margin-right: 8px; margin-bottom: 8px;
+  }
+  .btn:hover { background: #004ebc; }
+  .btn-secondary { background: #666; }
+  .btn-secondary:hover { background: #444; }
+  .toolbar { margin: 16px 0; }
+  .pass { color: #1a7f37; font-weight: 700; }
+  .fail { color: #cf222e; font-weight: 700; }
+  .assert-summary { font-size: 18px; margin-bottom: 16px; }
+  #canvas-test { display: none; }
+  #webgl-test { display: none; }
+  .status-msg { font-style: italic; color: #666; margin: 8px 0; }
+</style>
+</head>
+<body>
+
+<h1>Fingerprint Test Suite</h1>
+<p id="mode-label" class="status-msg">Collecting fingerprint signals...</p>
+
+<div id="summary-section" class="summary" style="display:none;">
+  <div id="hash-color" class="hash-block"></div>
+  <div>
+    <div><strong>Combined Fingerprint Hash</strong></div>
+    <div id="combined-hash" class="hash-text"></div>
+  </div>
+</div>
+
+<div id="assert-results" style="display:none;"></div>
+
+<div class="toolbar" id="toolbar" style="display:none;">
+  <button class="btn" id="btn-copy">Copy as JSON</button>
+  <button class="btn btn-secondary" id="btn-save">Save Snapshot</button>
+  <button class="btn btn-secondary" id="btn-compare">Compare with Snapshot</button>
+</div>
+
+<div id="results"></div>
+
+<canvas id="canvas-test" width="280" height="60"></canvas>
+<canvas id="webgl-test" width="64" height="64"></canvas>
+
+<script>
+(function() {
+  'use strict';
+
+  // --- Simple hash function ---
+  function simpleHash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + ch;
+      hash = hash & hash;
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
+
+  function hashToColor(hash) {
+    return '#' + hash.substring(0, 6);
+  }
+
+  // --- Font detection ---
+  const FINGERPRINT_FONTS = [
+    "Andale Mono","AppleGothic","Arial","Arial Black","Arial Hebrew","Arial MT",
+    "Arial Narrow","Arial Rounded MT Bold","Arial Unicode MS",
+    "Bitstream Vera Sans Mono","Book Antiqua","Bookman Old Style",
+    "Calibri","Cambria","Cambria Math","Century","Century Gothic",
+    "Century Schoolbook","Comic Sans","Comic Sans MS","Consolas",
+    "Courier","Courier New","Garamond","Geneva","Georgia","Helvetica",
+    "Helvetica Neue","Impact","Lucida Bright","Lucida Calligraphy",
+    "Lucida Console","Lucida Fax","LUCIDA GRANDE","Lucida Handwriting",
+    "Lucida Sans","Lucida Sans Typewriter","Lucida Sans Unicode",
+    "Microsoft Sans Serif","Monaco","Monotype Corsiva","MS Gothic",
+    "MS Outlook","MS PGothic","MS Reference Sans Serif","MS Sans Serif",
+    "MS Serif","MYRIAD","MYRIAD PRO","Palatino","Palatino Linotype",
+    "Segoe Print","Segoe Script","Segoe UI","Segoe UI Light",
+    "Segoe UI Semibold","Segoe UI Symbol","Tahoma","Times",
+    "Times New Roman","Times New Roman PS","Trebuchet MS",
+    "Verdana","Wingdings","Wingdings 2","Wingdings 3"
+  ];
+
+  function detectFonts() {
+    const baseFonts = ['monospace', 'serif', 'sans-serif'];
+    const testString = 'mmmmmmmmmmlli';
+    const testSize = '72px';
+    const container = document.createElement('div');
+    container.style.cssText = 'position:absolute;left:-9999px;top:-9999px;visibility:hidden;';
+    document.body.appendChild(container);
+
+    // Measure baseline widths
+    const baseWidths = {};
+    for (const base of baseFonts) {
+      const span = document.createElement('span');
+      span.style.cssText = 'font-size:' + testSize + ';font-family:' + base + ';';
+      span.textContent = testString;
+      container.appendChild(span);
+      baseWidths[base] = span.offsetWidth;
+    }
+    container.innerHTML = '';
+
+    const detected = [];
+    for (const font of FINGERPRINT_FONTS) {
+      let found = false;
+      for (const base of baseFonts) {
+        const span = document.createElement('span');
+        span.style.cssText = 'font-size:' + testSize + ';font-family:"' + font + '",' + base + ';';
+        span.textContent = testString;
+        container.appendChild(span);
+        if (span.offsetWidth !== baseWidths[base]) {
+          found = true;
+        }
+        container.removeChild(span);
+        if (found) break;
+      }
+      detected.push({ font: font, present: found });
+    }
+    document.body.removeChild(container);
+    return detected;
+  }
+
+  // --- Canvas fingerprint ---
+  function getCanvasFingerprint() {
+    const canvas = document.getElementById('canvas-test');
+    const ctx = canvas.getContext('2d');
+    // Draw test pattern
+    ctx.fillStyle = '#f00';
+    ctx.fillRect(0, 0, 70, 60);
+    ctx.fillStyle = '#0f0';
+    ctx.fillRect(70, 0, 70, 60);
+    ctx.fillStyle = '#00f';
+    ctx.fillRect(140, 0, 70, 60);
+    ctx.fillStyle = '#ff0';
+    ctx.fillRect(210, 0, 70, 60);
+    // Gradient
+    const grad = ctx.createLinearGradient(0, 0, 280, 0);
+    grad.addColorStop(0, 'rgba(255,0,0,0.5)');
+    grad.addColorStop(1, 'rgba(0,0,255,0.5)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 30, 280, 30);
+    // Text
+    ctx.fillStyle = '#222';
+    ctx.font = '14px Arial';
+    ctx.fillText('Fingerprint Test', 10, 20);
+    ctx.font = '14px Georgia';
+    ctx.fillText('abcdefgh', 160, 20);
+    // Emoji
+    ctx.font = '16px serif';
+    ctx.fillText('\u{1F600}\u{1F4A9}', 10, 50);
+    // Shapes
+    ctx.beginPath();
+    ctx.arc(250, 45, 12, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+
+    const dataURL = canvas.toDataURL();
+    return { dataURL: dataURL, hash: simpleHash(dataURL) };
+  }
+
+  // --- WebGL fingerprint ---
+  function getWebGLFingerprint() {
+    const canvas = document.getElementById('webgl-test');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return { vendor: null, renderer: null, pixelsHash: null };
+
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    const vendor = debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+    const renderer = debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+
+    // Render a triangle
+    const vShaderSrc = 'attribute vec2 p;void main(){gl_Position=vec4(p,0,1);}';
+    const fShaderSrc = 'precision mediump float;void main(){gl_FragColor=vec4(0.2,0.6,0.9,1.0);}';
+
+    function compileShader(src, type) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      return s;
+    }
+
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compileShader(vShaderSrc, gl.VERTEX_SHADER));
+    gl.attachShader(prog, compileShader(fShaderSrc, gl.FRAGMENT_SHADER));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0.5, -0.5, -0.5, 0.5, -0.5]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    const pixels = new Uint8Array(64 * 64 * 4);
+    gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    const pixelsHash = simpleHash(pixels.join(','));
+
+    return { vendor: vendor, renderer: renderer, pixelsHash: pixelsHash };
+  }
+
+  // --- AudioContext fingerprint ---
+  function getAudioFingerprint() {
+    return new Promise(function(resolve) {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const compressor = audioCtx.createDynamicsCompressor();
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+
+        oscillator.type = 'triangle';
+        oscillator.frequency.setValueAtTime(10000, audioCtx.currentTime);
+
+        compressor.threshold.setValueAtTime(-50, audioCtx.currentTime);
+        compressor.knee.setValueAtTime(40, audioCtx.currentTime);
+        compressor.ratio.setValueAtTime(12, audioCtx.currentTime);
+        compressor.attack.setValueAtTime(0, audioCtx.currentTime);
+        compressor.release.setValueAtTime(0.25, audioCtx.currentTime);
+
+        oscillator.connect(compressor);
+        compressor.connect(analyser);
+        analyser.connect(audioCtx.destination);
+        oscillator.start(0);
+
+        // Wait for some audio processing
+        setTimeout(function() {
+          const freqData = new Float32Array(analyser.frequencyBinCount);
+          analyser.getFloatFrequencyData(freqData);
+          oscillator.stop();
+          audioCtx.close();
+
+          // Hash the frequency data
+          const dataStr = Array.from(freqData).map(function(v) { return v.toFixed(4); }).join(',');
+          resolve({ hash: simpleHash(dataStr), sampleRate: audioCtx.sampleRate });
+        }, 100);
+      } catch (e) {
+        resolve({ hash: null, sampleRate: null, error: e.message });
+      }
+    });
+  }
+
+  // --- Collect all fingerprints ---
+  async function collectAll() {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const now = new Date();
+
+    const canvas = getCanvasFingerprint();
+    const webgl = getWebGLFingerprint();
+    const audio = await getAudioFingerprint();
+    const fonts = detectFonts();
+
+    const detectedFonts = fonts.filter(function(f) { return f.present; }).map(function(f) { return f.font; });
+    const fontHash = simpleHash(detectedFonts.join(','));
+
+    const data = {
+      timezone: {
+        intlTimezone: tz,
+        timezoneOffset: now.getTimezoneOffset(),
+        dateToString: now.toString()
+      },
+      navigator: {
+        platform: navigator.platform,
+        hardwareConcurrency: navigator.hardwareConcurrency,
+        deviceMemory: navigator.deviceMemory || 'N/A',
+        language: navigator.language,
+        languages: navigator.languages ? navigator.languages.join(', ') : 'N/A'
+      },
+      screen: {
+        width: screen.width,
+        height: screen.height,
+        colorDepth: screen.colorDepth,
+        devicePixelRatio: window.devicePixelRatio,
+        availWidth: screen.availWidth,
+        availHeight: screen.availHeight
+      },
+      canvas: {
+        hash: canvas.hash,
+        dataURLLength: canvas.dataURL.length
+      },
+      webgl: {
+        vendor: webgl.vendor,
+        renderer: webgl.renderer,
+        pixelsHash: webgl.pixelsHash
+      },
+      audio: {
+        hash: audio.hash,
+        sampleRate: audio.sampleRate
+      },
+      fonts: {
+        detected: detectedFonts,
+        detectedCount: detectedFonts.length,
+        hash: fontHash,
+        allResults: fonts
+      }
+    };
+
+    // Combined hash
+    const combinedStr = [
+      data.timezone.intlTimezone,
+      data.timezone.timezoneOffset,
+      data.navigator.platform,
+      data.navigator.hardwareConcurrency,
+      data.screen.width + 'x' + data.screen.height,
+      data.screen.colorDepth,
+      data.canvas.hash,
+      data.webgl.vendor,
+      data.webgl.renderer,
+      data.webgl.pixelsHash,
+      data.audio.hash,
+      data.fonts.hash
+    ].join('|');
+
+    data.combinedHash = simpleHash(combinedStr);
+
+    return data;
+  }
+
+  // --- Render visual inspection view ---
+  function renderVisual(data) {
+    const el = document.getElementById('results');
+
+    // Summary
+    const summaryEl = document.getElementById('summary-section');
+    summaryEl.style.display = 'flex';
+    document.getElementById('combined-hash').textContent = data.combinedHash;
+    document.getElementById('hash-color').style.background = hashToColor(data.combinedHash);
+
+    // Toolbar
+    document.getElementById('toolbar').style.display = 'block';
+    document.getElementById('mode-label').textContent = 'Visual inspection mode';
+
+    // Load snapshot for comparison
+    let snapshot = null;
+    try {
+      const saved = localStorage.getItem('fingerprint-snapshot');
+      if (saved) snapshot = JSON.parse(saved);
+    } catch (e) {}
+
+    function makeTable(title, entries) {
+      let html = '<h2>' + title + '</h2><table><tr><th>Property</th><th>Value</th></tr>';
+      for (const entry of entries) {
+        const cls = 'value';
+        html += '<tr><td class="key">' + entry[0] + '</td><td class="' + cls + '">' + entry[1] + '</td></tr>';
+      }
+      html += '</table>';
+      return html;
+    }
+
+    let html = '';
+
+    html += makeTable('Timezone', [
+      ['Intl.DateTimeFormat timezone', data.timezone.intlTimezone],
+      ['getTimezoneOffset()', data.timezone.timezoneOffset],
+      ['Date.toString()', data.timezone.dateToString]
+    ]);
+
+    html += makeTable('Navigator', [
+      ['platform', data.navigator.platform],
+      ['hardwareConcurrency', data.navigator.hardwareConcurrency],
+      ['deviceMemory', data.navigator.deviceMemory],
+      ['language', data.navigator.language],
+      ['languages', data.navigator.languages]
+    ]);
+
+    html += makeTable('Screen', [
+      ['width', data.screen.width],
+      ['height', data.screen.height],
+      ['colorDepth', data.screen.colorDepth],
+      ['devicePixelRatio', data.screen.devicePixelRatio],
+      ['availWidth', data.screen.availWidth],
+      ['availHeight', data.screen.availHeight]
+    ]);
+
+    html += makeTable('Canvas', [
+      ['Hash', data.canvas.hash],
+      ['Data URL length', data.canvas.dataURLLength]
+    ]);
+
+    html += makeTable('WebGL', [
+      ['Vendor', data.webgl.vendor],
+      ['Renderer', data.webgl.renderer],
+      ['readPixels hash', data.webgl.pixelsHash]
+    ]);
+
+    html += makeTable('AudioContext', [
+      ['Frequency data hash', data.audio.hash],
+      ['Sample rate', data.audio.sampleRate]
+    ]);
+
+    // Fonts section
+    html += '<h2>Fonts (' + data.fonts.detectedCount + ' detected, hash: ' + data.fonts.hash + ')</h2>';
+    html += '<table><tr><th>Font</th><th>Detected</th></tr>';
+    for (const f of data.fonts.allResults) {
+      const icon = f.present ? '<span class="pass">YES</span>' : '<span style="color:#999;">no</span>';
+      html += '<tr><td class="key">' + f.font + '</td><td>' + icon + '</td></tr>';
+    }
+    html += '</table>';
+
+    el.innerHTML = html;
+
+    // Button handlers
+    document.getElementById('btn-copy').onclick = function() {
+      const exportData = Object.assign({}, data);
+      // Remove allResults for cleaner export
+      exportData.fonts = { detected: data.fonts.detected, detectedCount: data.fonts.detectedCount, hash: data.fonts.hash };
+      navigator.clipboard.writeText(JSON.stringify(exportData, null, 2)).then(function() {
+        alert('Copied to clipboard!');
+      });
+    };
+
+    document.getElementById('btn-save').onclick = function() {
+      const exportData = Object.assign({}, data);
+      exportData.fonts = { detected: data.fonts.detected, detectedCount: data.fonts.detectedCount, hash: data.fonts.hash };
+      localStorage.setItem('fingerprint-snapshot', JSON.stringify(exportData));
+      alert('Snapshot saved!');
+    };
+
+    document.getElementById('btn-compare').onclick = function() {
+      const saved = localStorage.getItem('fingerprint-snapshot');
+      if (!saved) {
+        alert('No snapshot saved. Click "Save Snapshot" first.');
+        return;
+      }
+      const snap = JSON.parse(saved);
+      renderComparison(data, snap);
+    };
+  }
+
+  // --- Render comparison view ---
+  function renderComparison(current, snapshot) {
+    const el = document.getElementById('results');
+
+    function flatten(obj, prefix) {
+      const result = {};
+      for (const key of Object.keys(obj)) {
+        const path = prefix ? prefix + '.' + key : key;
+        const val = obj[key];
+        if (val !== null && typeof val === 'object' && !Array.isArray(val) && key !== 'allResults') {
+          Object.assign(result, flatten(val, path));
+        } else if (Array.isArray(val)) {
+          result[path] = val.join(', ');
+        } else {
+          result[path] = String(val);
+        }
+      }
+      return result;
+    }
+
+    const curFlat = flatten(current, '');
+    const snapFlat = flatten(snapshot, '');
+
+    // Remove allResults from comparison
+    for (const k of Object.keys(curFlat)) {
+      if (k.startsWith('fonts.allResults')) delete curFlat[k];
+    }
+    for (const k of Object.keys(snapFlat)) {
+      if (k.startsWith('fonts.allResults')) delete snapFlat[k];
+    }
+
+    const allKeys = new Set([...Object.keys(curFlat), ...Object.keys(snapFlat)]);
+    let diffCount = 0;
+    let totalCount = 0;
+
+    let html = '<h2>Comparison with Saved Snapshot</h2>';
+    html += '<p style="margin-bottom:12px;"><span style="background:#e6ffe6;padding:2px 6px;">Green</span> = changed (noise working) &nbsp; <span style="background:#fff;padding:2px 6px;border:1px solid #ddd;">White</span> = unchanged</p>';
+    html += '<table><tr><th>Property</th><th>Current</th><th>Snapshot</th><th>Status</th></tr>';
+
+    for (const key of [...allKeys].sort()) {
+      const cur = curFlat[key] || '';
+      const snap = snapFlat[key] || '';
+      const changed = cur !== snap;
+      if (changed) diffCount++;
+      totalCount++;
+      const cls = changed ? 'changed' : 'unchanged';
+      const icon = changed ? '<span class="pass">CHANGED</span>' : '<span style="color:#999;">same</span>';
+      html += '<tr><td class="key">' + key + '</td><td class="value ' + cls + '">' + cur + '</td><td class="value ' + cls + '">' + snap + '</td><td>' + icon + '</td></tr>';
+    }
+    html += '</table>';
+
+    html = '<div class="summary" style="margin-bottom:16px;"><div><strong>' + diffCount + ' / ' + totalCount + ' values changed</strong></div></div>' + html;
+
+    el.innerHTML = html;
+  }
+
+  // --- Render assertion view ---
+  function renderAssertions(data) {
+    document.getElementById('mode-label').textContent = 'Automated assertion mode';
+
+    const assertions = [
+      {
+        name: 'Canvas hash is not empty',
+        pass: typeof data.canvas.hash === 'string' && data.canvas.hash.length > 0
+      },
+      {
+        name: 'WebGL vendor is a string',
+        pass: typeof data.webgl.vendor === 'string' && data.webgl.vendor.length > 0
+      },
+      {
+        name: 'WebGL renderer is a string',
+        pass: typeof data.webgl.renderer === 'string' && data.webgl.renderer.length > 0
+      },
+      {
+        name: 'WebGL readPixels hash is not empty',
+        pass: typeof data.webgl.pixelsHash === 'string' && data.webgl.pixelsHash.length > 0
+      },
+      {
+        name: 'AudioContext hash is not empty',
+        pass: typeof data.audio.hash === 'string' && data.audio.hash.length > 0
+      },
+      {
+        name: 'Font probe returned results',
+        pass: data.fonts.detectedCount > 0
+      },
+      {
+        name: 'Timezone is a valid IANA timezone string',
+        pass: (function() {
+          try {
+            Intl.DateTimeFormat(undefined, { timeZone: data.timezone.intlTimezone });
+            return data.timezone.intlTimezone.includes('/');
+          } catch (e) { return false; }
+        })()
+      },
+      {
+        name: 'navigator.platform is defined',
+        pass: typeof data.navigator.platform === 'string' && data.navigator.platform.length > 0
+      },
+      {
+        name: 'navigator.hardwareConcurrency is a positive number',
+        pass: typeof data.navigator.hardwareConcurrency === 'number' && data.navigator.hardwareConcurrency > 0
+      },
+      {
+        name: 'navigator.language is defined',
+        pass: typeof data.navigator.language === 'string' && data.navigator.language.length > 0
+      },
+      {
+        name: 'screen.width is a positive number',
+        pass: typeof data.screen.width === 'number' && data.screen.width > 0
+      },
+      {
+        name: 'screen.height is a positive number',
+        pass: typeof data.screen.height === 'number' && data.screen.height > 0
+      },
+      {
+        name: 'screen.colorDepth is a positive number',
+        pass: typeof data.screen.colorDepth === 'number' && data.screen.colorDepth > 0
+      },
+      {
+        name: 'devicePixelRatio is a positive number',
+        pass: typeof data.screen.devicePixelRatio === 'number' && data.screen.devicePixelRatio > 0
+      }
+    ];
+
+    const passed = assertions.filter(function(a) { return a.pass; }).length;
+    const total = assertions.length;
+
+    let html = '<div class="assert-summary"><strong>' + passed + ' / ' + total + ' tests passed</strong></div>';
+    html += '<table><tr><th>Test</th><th>Result</th></tr>';
+    for (const a of assertions) {
+      const icon = a.pass ? '<span class="pass">PASS</span>' : '<span class="fail">FAIL</span>';
+      html += '<tr><td class="key">' + a.name + '</td><td>' + icon + '</td></tr>';
+    }
+    html += '</table>';
+
+    document.getElementById('assert-results').style.display = 'block';
+    document.getElementById('assert-results').innerHTML = html;
+  }
+
+  // --- Main ---
+  async function main() {
+    const data = await collectAll();
+    const params = new URLSearchParams(window.location.search);
+    const assertMode = params.get('assert') === 'true';
+
+    if (assertMode) {
+      renderAssertions(data);
+    }
+
+    // Always show visual view
+    renderVisual(data);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', main);
+  } else {
+    main();
+  }
+})();
+</script>
+</body>
+</html>

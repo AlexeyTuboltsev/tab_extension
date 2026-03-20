@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fingerprint Consistency Check</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #fff; color: #222; padding: 24px; max-width: 960px; margin: 0 auto;
+    line-height: 1.5;
+  }
+  h1 { color: #0060df; margin-bottom: 8px; font-size: 24px; }
+  h2 { color: #0060df; margin: 24px 0 12px; font-size: 18px; border-bottom: 2px solid #0060df; padding-bottom: 4px; }
+  p { margin-bottom: 12px; }
+  .note {
+    background: #f0f6ff; border: 1px solid #0060df; border-radius: 6px;
+    padding: 16px; margin: 16px 0; font-size: 14px;
+  }
+  .summary-box {
+    border-radius: 6px; padding: 16px; margin: 16px 0; font-size: 18px;
+  }
+  .summary-pass { background: #e6ffe6; border: 1px solid #1a7f37; }
+  .summary-warn { background: #fff8e6; border: 1px solid #c69026; }
+  .summary-fail { background: #ffe6e6; border: 1px solid #cf222e; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th { text-align: left; padding: 8px 10px; background: #f5f5f5; border-bottom: 2px solid #ddd; font-size: 13px; }
+  td { padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 13px; vertical-align: top; }
+  td.key { font-weight: 600; width: 300px; }
+  td.detail { font-family: monospace; color: #555; font-size: 12px; }
+  .pass { color: #1a7f37; font-weight: 700; }
+  .fail { color: #cf222e; font-weight: 700; }
+  .skip { color: #c69026; font-weight: 700; }
+  .status-msg { font-style: italic; color: #666; margin: 8px 0; }
+  #webgl-test { display: none; }
+</style>
+</head>
+<body>
+
+<h1>Fingerprint Consistency Check</h1>
+<p class="status-msg" id="status">Running consistency checks...</p>
+
+<div class="note">
+  This page validates that fingerprint signals do not contradict each other.
+  It is most useful once hardware profile mimicry and font mimicry are implemented.
+  Some checks may show as "SKIP" if the relevant features are not yet active.
+</div>
+
+<div id="summary"></div>
+<div id="profile-info"></div>
+<div id="results"></div>
+
+<canvas id="webgl-test" width="64" height="64"></canvas>
+
+<script>
+(function() {
+  'use strict';
+
+  // --- Font detection ---
+  const MACOS_FONTS = ['Helvetica Neue', 'SF Pro', 'Monaco', 'Geneva', 'AppleGothic', 'Lucida Grande'];
+  const WINDOWS_FONTS = ['Calibri', 'Segoe UI', 'Segoe UI Light', 'Segoe UI Semibold', 'Segoe UI Symbol', 'Segoe Print', 'Segoe Script', 'Consolas', 'Cambria', 'Cambria Math'];
+  const LINUX_FONTS = ['Bitstream Vera Sans Mono'];
+
+  const ALL_PROBE_FONTS = [...new Set([...MACOS_FONTS, ...WINDOWS_FONTS, ...LINUX_FONTS])];
+
+  function detectFont(font) {
+    const baseFonts = ['monospace', 'serif', 'sans-serif'];
+    const testString = 'mmmmmmmmmmlli';
+    const testSize = '72px';
+    const container = document.createElement('div');
+    container.style.cssText = 'position:absolute;left:-9999px;top:-9999px;visibility:hidden;';
+    document.body.appendChild(container);
+    const baseWidths = {};
+    for (const base of baseFonts) {
+      const span = document.createElement('span');
+      span.style.cssText = 'font-size:' + testSize + ';font-family:' + base + ';';
+      span.textContent = testString;
+      container.appendChild(span);
+      baseWidths[base] = span.offsetWidth;
+    }
+    container.innerHTML = '';
+    let found = false;
+    for (const base of baseFonts) {
+      const span = document.createElement('span');
+      span.style.cssText = 'font-size:' + testSize + ';font-family:"' + font + '",' + base + ';';
+      span.textContent = testString;
+      container.appendChild(span);
+      if (span.offsetWidth !== baseWidths[base]) found = true;
+      container.removeChild(span);
+      if (found) break;
+    }
+    document.body.removeChild(container);
+    return found;
+  }
+
+  // --- Common resolutions ---
+  const COMMON_RESOLUTIONS = [
+    '1366x768', '1920x1080', '1536x864', '1440x900', '1280x720',
+    '1600x900', '1280x800', '1280x1024', '1024x768', '2560x1440',
+    '3840x2160', '2560x1600', '1680x1050', '1920x1200', '3440x1440',
+    '2560x1080', '1360x768', '1152x864', '1024x600', '800x600',
+    // Retina / HiDPI effective resolutions are often standard too
+    '2880x1800', '2560x1440', '3072x1920', '2304x1440',
+    // Common mobile-ish
+    '375x812', '390x844', '414x896', '360x640', '412x915'
+  ];
+
+  // --- Timezone to region mapping ---
+  const TZ_REGION_LANG = {
+    'America': ['en', 'es', 'pt', 'fr'],
+    'Europe': ['en', 'de', 'fr', 'es', 'it', 'nl', 'pl', 'pt', 'ru', 'uk', 'cs', 'sv', 'da', 'fi', 'no', 'hu', 'ro', 'bg', 'hr', 'sk', 'sl', 'et', 'lt', 'lv', 'el', 'tr'],
+    'Asia': ['zh', 'ja', 'ko', 'hi', 'ar', 'th', 'vi', 'id', 'ms', 'he', 'fa', 'ur', 'bn', 'ta', 'te', 'kn', 'ml', 'si', 'my', 'km', 'lo', 'ka', 'hy', 'az', 'uz', 'kk', 'ky', 'tg', 'tk', 'mn', 'en', 'ru'],
+    'Africa': ['en', 'fr', 'ar', 'pt', 'sw', 'am', 'ha', 'yo', 'ig', 'zu'],
+    'Australia': ['en'],
+    'Pacific': ['en', 'fr'],
+    'Atlantic': ['en', 'pt', 'es', 'is'],
+    'Indian': ['en', 'fr'],
+    'Arctic': ['en', 'no', 'ru']
+  };
+
+  // --- WebGL info ---
+  function getWebGLRenderer() {
+    const canvas = document.getElementById('webgl-test');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return null;
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    if (!debugInfo) return null;
+    return gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+  }
+
+  // --- Run checks ---
+  function runChecks() {
+    const platform = navigator.platform;
+    const cores = navigator.hardwareConcurrency;
+    const memory = navigator.deviceMemory;
+    const language = navigator.language;
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const screenRes = screen.width + 'x' + screen.height;
+    const dpr = window.devicePixelRatio;
+    const webglRenderer = getWebGLRenderer();
+
+    // Detect relevant fonts
+    const detectedFonts = {};
+    for (const font of ALL_PROBE_FONTS) {
+      detectedFonts[font] = detectFont(font);
+    }
+
+    const checks = [];
+
+    // --- Platform vs Font checks ---
+
+    // If Win32, macOS-only fonts should NOT be detected
+    if (platform === 'Win32' || platform === 'Win64') {
+      const macFontsDetected = MACOS_FONTS.filter(function(f) { return detectedFonts[f]; });
+      checks.push({
+        name: 'Windows platform should not have macOS-only fonts',
+        pass: macFontsDetected.length === 0,
+        detail: macFontsDetected.length === 0
+          ? 'No macOS fonts detected on Windows platform'
+          : 'macOS fonts detected on Windows: ' + macFontsDetected.join(', ')
+      });
+    } else if (platform === 'MacIntel' || platform === 'MacPPC' || platform === 'MacARM') {
+      const winFontsDetected = WINDOWS_FONTS.filter(function(f) { return detectedFonts[f]; });
+      checks.push({
+        name: 'macOS platform should not have Windows-only fonts',
+        pass: winFontsDetected.length === 0,
+        detail: winFontsDetected.length === 0
+          ? 'No Windows fonts detected on macOS platform'
+          : 'Windows fonts detected on macOS: ' + winFontsDetected.join(', ')
+      });
+    } else if (platform === 'Linux x86_64' || platform === 'Linux i686' || platform.startsWith('Linux')) {
+      // Linux can have various fonts installed, just note what's detected
+      checks.push({
+        name: 'Linux platform font consistency (informational)',
+        pass: true,
+        detail: 'Linux detected. macOS fonts: ' + MACOS_FONTS.filter(function(f) { return detectedFonts[f]; }).join(', ') + '. Windows fonts: ' + WINDOWS_FONTS.filter(function(f) { return detectedFonts[f]; }).join(', ')
+      });
+    } else {
+      checks.push({
+        name: 'Platform vs fonts',
+        pass: null,
+        detail: 'Unknown platform "' + platform + '" - cannot check font consistency'
+      });
+    }
+
+    // --- WebGL renderer vs platform ---
+    if (webglRenderer) {
+      const rendererLower = webglRenderer.toLowerCase();
+      const isAppleGPU = rendererLower.includes('apple') || rendererLower.includes('m1') || rendererLower.includes('m2') || rendererLower.includes('m3') || rendererLower.includes('m4');
+      const isWindowsPlatform = platform === 'Win32' || platform === 'Win64';
+      const isMacPlatform = platform === 'MacIntel' || platform === 'MacPPC' || platform === 'MacARM';
+
+      if (isWindowsPlatform && isAppleGPU) {
+        checks.push({
+          name: 'WebGL renderer should match platform (no Apple GPU on Windows)',
+          pass: false,
+          detail: 'Platform: ' + platform + ', Renderer: ' + webglRenderer
+        });
+      } else if (isMacPlatform && !isAppleGPU && (rendererLower.includes('nvidia') || rendererLower.includes('radeon') || rendererLower.includes('intel'))) {
+        // macOS can have Intel/AMD GPUs, but check for obviously wrong combos
+        checks.push({
+          name: 'WebGL renderer matches platform',
+          pass: true,
+          detail: 'Platform: ' + platform + ', Renderer: ' + webglRenderer + ' (plausible)'
+        });
+      } else {
+        checks.push({
+          name: 'WebGL renderer matches platform',
+          pass: true,
+          detail: 'Platform: ' + platform + ', Renderer: ' + webglRenderer
+        });
+      }
+    } else {
+      checks.push({
+        name: 'WebGL renderer matches platform',
+        pass: null,
+        detail: 'WebGL renderer info not available'
+      });
+    }
+
+    // --- CPU cores plausibility for GPU tier ---
+    if (webglRenderer && cores) {
+      const rendererLower = webglRenderer.toLowerCase();
+      const isHighEndGPU = rendererLower.includes('rtx 40') || rendererLower.includes('rtx 30') || rendererLower.includes('rx 7') || rendererLower.includes('rx 6');
+      const isLowCores = cores <= 2;
+
+      if (isHighEndGPU && isLowCores) {
+        checks.push({
+          name: 'CPU cores plausible for GPU tier',
+          pass: false,
+          detail: 'High-end GPU (' + webglRenderer + ') with only ' + cores + ' CPU cores is implausible'
+        });
+      } else {
+        checks.push({
+          name: 'CPU cores plausible for GPU tier',
+          pass: true,
+          detail: cores + ' cores with ' + (webglRenderer || 'unknown GPU') + ' is plausible'
+        });
+      }
+    } else {
+      checks.push({
+        name: 'CPU cores plausible for GPU tier',
+        pass: null,
+        detail: 'Cannot determine GPU tier (WebGL renderer: ' + (webglRenderer || 'N/A') + ', cores: ' + cores + ')'
+      });
+    }
+
+    // --- Screen resolution is common ---
+    const isCommonRes = COMMON_RESOLUTIONS.includes(screenRes);
+    checks.push({
+      name: 'Screen resolution is a common value',
+      pass: isCommonRes,
+      detail: screenRes + (isCommonRes ? ' is a known common resolution' : ' is unusual and may be fingerprintable')
+    });
+
+    // --- Language plausibly matches timezone region ---
+    if (tz && language) {
+      const tzRegion = tz.split('/')[0];
+      const langCode = language.split('-')[0].toLowerCase();
+      const plausibleLangs = TZ_REGION_LANG[tzRegion];
+
+      if (plausibleLangs) {
+        const isPlausible = plausibleLangs.includes(langCode);
+        checks.push({
+          name: 'Language plausibly matches timezone region',
+          pass: isPlausible,
+          detail: 'Language "' + language + '" in timezone region "' + tzRegion + '"' + (isPlausible ? ' is plausible' : ' is unusual (expected one of: ' + plausibleLangs.join(', ') + ')')
+        });
+      } else {
+        checks.push({
+          name: 'Language plausibly matches timezone region',
+          pass: null,
+          detail: 'Unknown timezone region "' + tzRegion + '"'
+        });
+      }
+    }
+
+    // --- devicePixelRatio is plausible ---
+    const plausibleDPR = [1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+    const dprPlausible = plausibleDPR.includes(dpr);
+    checks.push({
+      name: 'devicePixelRatio is a common value',
+      pass: dprPlausible,
+      detail: 'DPR: ' + dpr + (dprPlausible ? ' is common' : ' is unusual (common values: ' + plausibleDPR.join(', ') + ')')
+    });
+
+    // --- Memory is plausible power of 2 ---
+    if (memory !== undefined && memory !== null) {
+      const plausibleMemory = [0.25, 0.5, 1, 2, 4, 8, 16, 32];
+      const memPlausible = plausibleMemory.includes(memory);
+      checks.push({
+        name: 'deviceMemory is a plausible value',
+        pass: memPlausible,
+        detail: 'Memory: ' + memory + ' GB' + (memPlausible ? ' (valid)' : ' (should be one of: ' + plausibleMemory.join(', ') + ')')
+      });
+    }
+
+    // --- Cores is plausible ---
+    if (cores) {
+      const plausibleCores = [1, 2, 4, 6, 8, 10, 12, 16, 24, 32, 64];
+      const coresPlausible = plausibleCores.includes(cores);
+      checks.push({
+        name: 'hardwareConcurrency is a common value',
+        pass: coresPlausible,
+        detail: 'Cores: ' + cores + (coresPlausible ? ' is common' : ' is unusual')
+      });
+    }
+
+    return checks;
+  }
+
+  // --- Render ---
+  function render() {
+    const checks = runChecks();
+
+    const passed = checks.filter(function(c) { return c.pass === true; }).length;
+    const failed = checks.filter(function(c) { return c.pass === false; }).length;
+    const skipped = checks.filter(function(c) { return c.pass === null; }).length;
+    const total = checks.length;
+
+    document.getElementById('status').textContent = 'Consistency checks complete.';
+
+    // Summary
+    let summaryClass = 'summary-pass';
+    if (failed > 0) summaryClass = 'summary-fail';
+    else if (skipped > 0) summaryClass = 'summary-warn';
+
+    document.getElementById('summary').innerHTML =
+      '<div class="summary-box ' + summaryClass + '"><strong>' + passed + ' passed</strong>, ' +
+      failed + ' failed, ' + skipped + ' skipped &mdash; out of ' + total + ' checks</div>';
+
+    // Profile info
+    let profileHtml = '<h2>Current Profile</h2><table>';
+    profileHtml += '<tr><td class="key">Platform</td><td>' + navigator.platform + '</td></tr>';
+    profileHtml += '<tr><td class="key">Timezone</td><td>' + Intl.DateTimeFormat().resolvedOptions().timeZone + '</td></tr>';
+    profileHtml += '<tr><td class="key">Language</td><td>' + navigator.language + '</td></tr>';
+    profileHtml += '<tr><td class="key">Screen</td><td>' + screen.width + 'x' + screen.height + ' @ ' + window.devicePixelRatio + 'x</td></tr>';
+    profileHtml += '<tr><td class="key">Cores</td><td>' + navigator.hardwareConcurrency + '</td></tr>';
+    profileHtml += '<tr><td class="key">Memory</td><td>' + (navigator.deviceMemory || 'N/A') + ' GB</td></tr>';
+
+    const canvas = document.getElementById('webgl-test');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (gl) {
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      if (dbg) {
+        profileHtml += '<tr><td class="key">WebGL Renderer</td><td>' + gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) + '</td></tr>';
+        profileHtml += '<tr><td class="key">WebGL Vendor</td><td>' + gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) + '</td></tr>';
+      }
+    }
+    profileHtml += '</table>';
+    document.getElementById('profile-info').innerHTML = profileHtml;
+
+    // Results
+    let html = '<h2>Consistency Checks</h2><table><tr><th>Check</th><th>Result</th><th>Details</th></tr>';
+    for (const check of checks) {
+      let icon;
+      if (check.pass === true) icon = '<span class="pass">PASS</span>';
+      else if (check.pass === false) icon = '<span class="fail">FAIL</span>';
+      else icon = '<span class="skip">SKIP</span>';
+      html += '<tr><td class="key">' + check.name + '</td><td>' + icon + '</td><td class="detail">' + check.detail + '</td></tr>';
+    }
+    html += '</table>';
+    document.getElementById('results').innerHTML = html;
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', render);
+  } else {
+    render();
+  }
+})();
+</script>
+</body>
+</html>
