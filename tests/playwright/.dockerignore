@@ -1,0 +1,5 @@
+node_modules
+*.xpi
+.git
+.claude
+.firecrawl
