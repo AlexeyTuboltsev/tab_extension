@@ -10,8 +10,6 @@ const IpTimezone = (() => {
     { url: 'http://ip-api.com/json/', parse: d => ({ timezone: d.timezone, country: d.countryCode, city: d.city, ip: d.query }) },
     { url: 'https://ipapi.co/json/', parse: d => ({ timezone: d.timezone, country: d.country_code || d.country, city: d.city, ip: d.ip }) },
   ];
-  const MIN_RECHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
-
   let cachedInfo = null;
   let onChangeCallback = null;
 
@@ -50,9 +48,6 @@ const IpTimezone = (() => {
   }
 
   async function maybeRefresh() {
-    if (cachedInfo && (Date.now() - cachedInfo.lastChecked) < MIN_RECHECK_INTERVAL) {
-      return; // Too soon to re-check
-    }
     await fetchIPInfo();
   }
 
@@ -96,5 +91,5 @@ const IpTimezone = (() => {
 
   function onChange(cb) { onChangeCallback = cb; }
 
-  return { init, getIPInfo, onChange };
+  return { init, getIPInfo, onChange, maybeRefresh };
 })();

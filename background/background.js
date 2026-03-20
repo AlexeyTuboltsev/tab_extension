@@ -10,10 +10,12 @@
     PageActionIndicator.setup();
     await IpTimezone.init();
     await registerTimezoneScript();
-    IpTimezone.onChange((info) => {
-      console.log('[TZ] IP changed — updating timezone to', info.timezone);
-      TabInterceptor.setTimezone(info.timezone);
+    IpTimezone.onChange(async (info) => {
+      console.log('[TZ] IP changed — re-registering timezone script for', info.timezone);
+      await registerTimezoneScript();
     });
+    // Recheck IP on every new tab to catch VPN switches
+    browser.tabs.onCreated.addListener(() => IpTimezone.maybeRefresh());
     browser.storage.onChanged.addListener((changes) => {
       if (changes[STORAGE_KEYS.GLOBAL_RULES] || changes[STORAGE_KEYS.CONTAINER_RULES] || changes[STORAGE_KEYS.SAVED_CONTAINERS] || changes[STORAGE_KEYS.SHARED_PROVIDERS]) {
         RuleEngine.refresh();
