@@ -158,7 +158,7 @@ function addRowHTML(tbl, label, html, value, sectionName) {
   const offset = new Date().getTimezoneOffset();
   const lang = navigator.language;
   const langs = navigator.languages.join(', ');
-  addRow(sec.tbl, 'Intl.DateTimeFormat().resolvedOptions().timeZone', tz, sec.div.id.replace('section-',''));
+  addRow(sec.tbl, 'Intl.DateTimeFormat().resolvedOptions().timeZone', tz, 'Timezone & Locale');
   addRow(sec.tbl, 'new Date().getTimezoneOffset()', offset, 'Timezone & Locale');
   addRow(sec.tbl, 'navigator.language', lang, 'Timezone & Locale');
   addRow(sec.tbl, 'navigator.languages', langs, 'Timezone & Locale');
