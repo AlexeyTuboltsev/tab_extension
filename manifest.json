@@ -49,7 +49,15 @@
     "js": ["content/timezone-spoof.js"],
     "run_at": "document_start",
     "all_frames": true
+  }, {
+    "matches": ["<all_urls>"],
+    "js": ["content/profile-spoof.js"],
+    "run_at": "document_start",
+    "all_frames": true
   }],
+  "web_accessible_resources": [
+    "data/profiles.json"
+  ],
   "browser_specific_settings": {
     "gecko": {
       "id": "container-tab-manager@alexeytuboltsev",

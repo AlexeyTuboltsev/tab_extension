@@ -1,5 +1,21 @@
 // Main entry point
 
+let cachedProfiles = null;
+
+async function loadProfiles() {
+  if (cachedProfiles) return cachedProfiles;
+  try {
+    const url = browser.runtime.getURL('data/profiles.json');
+    const response = await fetch(url);
+    const data = await response.json();
+    cachedProfiles = data.profiles;
+    return cachedProfiles;
+  } catch (e) {
+    console.warn('[Profiles] Failed to load profiles:', e.message);
+    return [];
+  }
+}
+
 (async () => {
   try {
     await ContainerManager.initialize();
@@ -47,6 +63,27 @@ async function handleMessage(message, sender) {
     case 'getTimezone': {
       const info = await IpTimezone.getIPInfo();
       return { timezone: info?.timezone || null, country: info?.country || null };
+    }
+    case 'getProfile': {
+      if (!sender?.tab?.cookieStoreId || sender.tab.cookieStoreId === 'firefox-default') {
+        return { profile: null };
+      }
+      const ipInfo = await IpTimezone.getIPInfo();
+      const country = ipInfo?.country || 'US';
+      const seed = hashString(sender.tab.cookieStoreId);
+
+      const profiles = await loadProfiles();
+      if (!profiles || profiles.length === 0) {
+        return { profile: null };
+      }
+
+      // Find profiles matching this country
+      const matching = profiles.filter(p => p.countries.includes(country));
+      const pool = matching.length > 0 ? matching : profiles;
+
+      // Deterministically pick a profile based on container seed
+      const picked = pool[seed % pool.length];
+      return { profile: picked };
     }
     case 'getState': {
       const containers = ContainerManager.getState();

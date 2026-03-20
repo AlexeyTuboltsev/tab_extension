@@ -9,6 +9,7 @@ zip -r "$OUT" \
   manifest.json \
   background/ \
   content/ \
+  data/ \
   shared/ \
   popup/ \
   options/ \
