@@ -154,14 +154,28 @@ function addRowHTML(tbl, label, html, value, sectionName) {
 // ══════════════════════════════════════════
 (function() {
   const sec = createSection('Timezone & Locale');
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const offset = new Date().getTimezoneOffset();
-  const lang = navigator.language;
-  const langs = navigator.languages.join(', ');
-  addRow(sec.tbl, 'Intl.DateTimeFormat().resolvedOptions().timeZone', tz, 'Timezone & Locale');
-  addRow(sec.tbl, 'new Date().getTimezoneOffset()', offset, 'Timezone & Locale');
-  addRow(sec.tbl, 'navigator.language', lang, 'Timezone & Locale');
-  addRow(sec.tbl, 'navigator.languages', langs, 'Timezone & Locale');
+  function collectTZ() {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const offset = new Date().getTimezoneOffset();
+    const lang = navigator.language;
+    const langs = navigator.languages ? navigator.languages.join(', ') : '';
+    // Clear previous rows
+    sec.tbl.replaceChildren();
+    addRow(sec.tbl, 'Intl.DateTimeFormat().resolvedOptions().timeZone', tz, 'Timezone & Locale');
+    addRow(sec.tbl, 'new Date().getTimezoneOffset()', offset, 'Timezone & Locale');
+    addRow(sec.tbl, 'navigator.language', lang, 'Timezone & Locale');
+    addRow(sec.tbl, 'navigator.languages', langs, 'Timezone & Locale');
+    return tz;
+  }
+  // Collect immediately
+  const immediateTZ = collectTZ();
+  // Re-collect after 500ms to catch async timezone spoofing
+  setTimeout(function() {
+    const delayedTZ = collectTZ();
+    if (delayedTZ !== immediateTZ) {
+      updateCombinedHash();
+    }
+  }, 500);
 })();
 
 // ══════════════════════════════════════════

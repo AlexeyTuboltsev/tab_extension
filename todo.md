@@ -505,3 +505,9 @@ Ensure spoofing doesn't visibly break page rendering:
 - [ ] Font spoofing doesn't cause layout shifts (only affects measurement, not rendering)
 - [ ] WebGL scenes render correctly (no visible artifacts from projection offset)
 - Open common sites (Google, YouTube, GitHub, maps) and verify no visual glitches
+
+---
+
+## Encrypt/obfuscate extension cookies
+
+All cookies set or managed by the extension (container tracking, timezone cache, etc.) should be encrypted or obfuscated to prevent fingerprinters or page scripts from reading them and using them as an additional tracking signal. This includes any cookies used for cross-script communication (e.g., timezone data passed between background and content scripts).

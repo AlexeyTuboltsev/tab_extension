@@ -1,164 +1,122 @@
-// Per-container timezone spoofing based on IP geolocation
-// Runs at document_start to patch Date/Intl prototypes before page scripts execute
+// Per-container timezone spoofing
+// 1. Reads timezone SYNCHRONOUSLY from localStorage (set on previous page load)
+// 2. Falls back to async message to background
+// 3. Writes timezone to localStorage for next page load on this domain
 
 (function () {
   'use strict';
 
-  // --- Timezone state (updated async, patches applied immediately) ---
-  let spoofedTimezone = null;
-
-  // Save original functions before any patching
   const OrigDate = Date;
-  const origGetTimezoneOffset = Date.prototype.getTimezoneOffset;
-  const origToString = Date.prototype.toString;
-  const origToTimeString = Date.prototype.toTimeString;
-  const origToLocaleString = Date.prototype.toLocaleString;
-  const origToLocaleDateString = Date.prototype.toLocaleDateString;
-  const origToLocaleTimeString = Date.prototype.toLocaleTimeString;
-  const OrigDateTimeFormat = Intl.DateTimeFormat;
-  const origResolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
+  const origGTZO = Date.prototype.getTimezoneOffset;
+  const origToStr = Date.prototype.toString;
+  const origToTS = Date.prototype.toTimeString;
+  const origToLS = Date.prototype.toLocaleString;
+  const origToLDS = Date.prototype.toLocaleDateString;
+  const origToLTS = Date.prototype.toLocaleTimeString;
+  const OrigDTF = Intl.DateTimeFormat;
+  const origRO = Intl.DateTimeFormat.prototype.resolvedOptions;
 
-  // Compute UTC offset in minutes for a given IANA timezone
-  // Returns the value that getTimezoneOffset() should return (UTC - local, in minutes)
-  function getOffsetForTimezone(tz) {
+  let TZ = null;
+  let TZ_OFFSET = null;
+
+  function activate(tz) {
+    TZ = tz;
     try {
       const now = new OrigDate();
-      const utcStr = now.toLocaleString('en-US', { timeZone: 'UTC' });
-      const tzStr = now.toLocaleString('en-US', { timeZone: tz });
-      return (new OrigDate(utcStr) - new OrigDate(tzStr)) / 60000;
+      const utc = now.toLocaleString('en-US', { timeZone: 'UTC' });
+      const loc = now.toLocaleString('en-US', { timeZone: tz });
+      TZ_OFFSET = (new OrigDate(utc) - new OrigDate(loc)) / 60000;
     } catch (e) {
-      return origGetTimezoneOffset.call(new OrigDate());
+      TZ = null;
+      TZ_OFFSET = null;
     }
   }
 
-  // Get short timezone abbreviation (e.g. "CET", "EST")
-  function getTimezoneAbbr(tz) {
-    try {
-      const fmt = new OrigDateTimeFormat('en-US', {
-        timeZone: tz,
-        timeZoneName: 'short'
-      });
-      const parts = fmt.formatToParts(new OrigDate());
-      const tzPart = parts.find(p => p.type === 'timeZoneName');
-      return tzPart ? tzPart.value : '';
-    } catch (e) {
-      return '';
+  // --- SYNCHRONOUS: try localStorage first ---
+  try {
+    const cached = localStorage.getItem('__ctm_tz');
+    if (cached) {
+      activate(cached);
     }
+  } catch (e) {
+    // localStorage may be blocked
   }
 
-  // Get long timezone name (e.g. "Central European Standard Time")
-  function getTimezoneLong(tz) {
-    try {
-      const fmt = new OrigDateTimeFormat('en-US', {
-        timeZone: tz,
-        timeZoneName: 'long'
-      });
-      const parts = fmt.formatToParts(new OrigDate());
-      const tzPart = parts.find(p => p.type === 'timeZoneName');
-      return tzPart ? tzPart.value : '';
-    } catch (e) {
-      return '';
-    }
-  }
-
-  // Format offset as +HHMM or -HHMM string
-  function formatGMTOffset(offsetMinutes) {
-    const sign = offsetMinutes <= 0 ? '+' : '-';
-    const abs = Math.abs(offsetMinutes);
-    const h = String(Math.floor(abs / 60)).padStart(2, '0');
-    const m = String(abs % 60).padStart(2, '0');
-    return 'GMT' + sign + h + m;
-  }
-
-  // --- Request timezone info from background ---
+  // --- ASYNC: get fresh timezone from background, update localStorage ---
   browser.runtime.sendMessage({ type: 'getTimezone' }).then(response => {
     if (response && response.timezone) {
-      spoofedTimezone = response.timezone;
+      activate(response.timezone);
+      try {
+        localStorage.setItem('__ctm_tz', response.timezone);
+      } catch (e) {}
     }
-  }).catch(() => {
-    // Extension context invalidated — leave timezone as null (no spoofing)
-  });
+  }).catch(() => {});
 
-  // --- Patch Date.prototype.getTimezoneOffset ---
-  function patchedGetTimezoneOffset() {
-    if (!spoofedTimezone) return origGetTimezoneOffset.call(this);
-    return getOffsetForTimezone(spoofedTimezone);
+  // --- Helper functions ---
+  function gmtStr() {
+    const s = TZ_OFFSET <= 0 ? '+' : '-';
+    const a = Math.abs(TZ_OFFSET);
+    return 'GMT' + s + String(Math.floor(a / 60)).padStart(2, '0') + String(a % 60).padStart(2, '0');
   }
-  Date.prototype.getTimezoneOffset = exportFunction(patchedGetTimezoneOffset, window);
 
-  // --- Patch Date.prototype.toString ---
-  function patchedToString() {
-    if (!spoofedTimezone) return origToString.call(this);
-    const str = origToString.call(this);
-    // Replace timezone portion: e.g. "GMT+0100 (Central European Standard Time)"
-    const gmtStr = formatGMTOffset(getOffsetForTimezone(spoofedTimezone));
-    const longName = getTimezoneLong(spoofedTimezone);
-    return str.replace(/GMT[+-]\d{4}\s*\([^)]*\)/, gmtStr + ' (' + longName + ')');
+  function longName() {
+    try {
+      const f = new OrigDTF('en-US', { timeZone: TZ, timeZoneName: 'long' });
+      const p = f.formatToParts(new OrigDate());
+      const t = p.find(x => x.type === 'timeZoneName');
+      return t ? t.value : '';
+    } catch (e) { return ''; }
   }
-  Date.prototype.toString = exportFunction(patchedToString, window);
 
-  // --- Patch Date.prototype.toTimeString ---
-  function patchedToTimeString() {
-    if (!spoofedTimezone) return origToTimeString.call(this);
-    const str = origToTimeString.call(this);
-    const gmtStr = formatGMTOffset(getOffsetForTimezone(spoofedTimezone));
-    const longName = getTimezoneLong(spoofedTimezone);
-    return str.replace(/GMT[+-]\d{4}\s*\([^)]*\)/, gmtStr + ' (' + longName + ')');
-  }
-  Date.prototype.toTimeString = exportFunction(patchedToTimeString, window);
+  // --- PATCHES (always active, check TZ on each call) ---
 
-  // --- Patch Date.prototype.toLocaleString / toLocaleDateString / toLocaleTimeString ---
-  function patchedToLocaleString(locales, options) {
-    if (!spoofedTimezone) return origToLocaleString.call(this, locales, options);
+  Date.prototype.getTimezoneOffset = exportFunction(function () {
+    if (TZ === null) return origGTZO.call(this);
+    return TZ_OFFSET;
+  }, window);
+
+  Date.prototype.toString = exportFunction(function () {
+    if (TZ === null) return origToStr.call(this);
+    return origToStr.call(this).replace(/GMT[+-]\d{4}\s*\([^)]*\)/, gmtStr() + ' (' + longName() + ')');
+  }, window);
+
+  Date.prototype.toTimeString = exportFunction(function () {
+    if (TZ === null) return origToTS.call(this);
+    return origToTS.call(this).replace(/GMT[+-]\d{4}\s*\([^)]*\)/, gmtStr() + ' (' + longName() + ')');
+  }, window);
+
+  Date.prototype.toLocaleString = exportFunction(function (l, o) {
+    if (TZ === null) return origToLS.call(this, l, o);
+    const opts = Object.assign({}, o || {}); if (!opts.timeZone) opts.timeZone = TZ;
+    return origToLS.call(this, l, opts);
+  }, window);
+
+  Date.prototype.toLocaleDateString = exportFunction(function (l, o) {
+    if (TZ === null) return origToLDS.call(this, l, o);
+    const opts = Object.assign({}, o || {}); if (!opts.timeZone) opts.timeZone = TZ;
+    return origToLDS.call(this, l, opts);
+  }, window);
+
+  Date.prototype.toLocaleTimeString = exportFunction(function (l, o) {
+    if (TZ === null) return origToLTS.call(this, l, o);
+    const opts = Object.assign({}, o || {}); if (!opts.timeZone) opts.timeZone = TZ;
+    return origToLTS.call(this, l, opts);
+  }, window);
+
+  const PatchedDTF = exportFunction(function (locales, options) {
     const opts = Object.assign({}, options || {});
-    if (!opts.timeZone) opts.timeZone = spoofedTimezone;
-    return origToLocaleString.call(this, locales, opts);
-  }
-  Date.prototype.toLocaleString = exportFunction(patchedToLocaleString, window);
+    if (TZ && !opts.timeZone) opts.timeZone = TZ;
+    if (new.target) return new OrigDTF(locales, opts);
+    return OrigDTF(locales, opts);
+  }, window);
+  PatchedDTF.prototype = OrigDTF.prototype;
+  PatchedDTF.supportedLocalesOf = OrigDTF.supportedLocalesOf;
+  Intl.DateTimeFormat = PatchedDTF;
 
-  function patchedToLocaleDateString(locales, options) {
-    if (!spoofedTimezone) return origToLocaleDateString.call(this, locales, options);
-    const opts = Object.assign({}, options || {});
-    if (!opts.timeZone) opts.timeZone = spoofedTimezone;
-    return origToLocaleDateString.call(this, locales, opts);
-  }
-  Date.prototype.toLocaleDateString = exportFunction(patchedToLocaleDateString, window);
-
-  function patchedToLocaleTimeString(locales, options) {
-    if (!spoofedTimezone) return origToLocaleTimeString.call(this, locales, options);
-    const opts = Object.assign({}, options || {});
-    if (!opts.timeZone) opts.timeZone = spoofedTimezone;
-    return origToLocaleTimeString.call(this, locales, opts);
-  }
-  Date.prototype.toLocaleTimeString = exportFunction(patchedToLocaleTimeString, window);
-
-  // --- Patch Intl.DateTimeFormat ---
-  function PatchedDateTimeFormat(locales, options) {
-    const opts = Object.assign({}, options || {});
-    if (spoofedTimezone && !opts.timeZone) {
-      opts.timeZone = spoofedTimezone;
-    }
-    // Support both `new Intl.DateTimeFormat()` and `Intl.DateTimeFormat()` calls
-    if (new.target) {
-      return new OrigDateTimeFormat(locales, opts);
-    }
-    return OrigDateTimeFormat(locales, opts);
-  }
-
-  // Copy static properties and prototype
-  PatchedDateTimeFormat.prototype = OrigDateTimeFormat.prototype;
-  PatchedDateTimeFormat.supportedLocalesOf = OrigDateTimeFormat.supportedLocalesOf;
-
-  Intl.DateTimeFormat = exportFunction(PatchedDateTimeFormat, window);
-
-  // --- Patch Intl.DateTimeFormat.prototype.resolvedOptions ---
-  function patchedResolvedOptions() {
-    const resolved = origResolvedOptions.call(this);
-    if (spoofedTimezone) {
-      resolved.timeZone = spoofedTimezone;
-    }
-    return resolved;
-  }
-  Intl.DateTimeFormat.prototype.resolvedOptions = exportFunction(patchedResolvedOptions, window);
+  Intl.DateTimeFormat.prototype.resolvedOptions = exportFunction(function () {
+    const r = origRO.call(this);
+    if (TZ) r.timeZone = TZ;
+    return r;
+  }, window);
 
 })();

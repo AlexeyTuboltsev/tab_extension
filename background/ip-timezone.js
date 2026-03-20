@@ -5,34 +5,48 @@ const IpTimezone = (() => {
   'use strict';
 
   const STORAGE_KEY = 'ipTimezone';
-  const API_URL = 'https://ipapi.co/json/';
+  // Try multiple APIs in order — some block extension contexts
+  const API_URLS = [
+    { url: 'http://ip-api.com/json/', parse: d => ({ timezone: d.timezone, country: d.countryCode, city: d.city, ip: d.query }) },
+    { url: 'https://ipapi.co/json/', parse: d => ({ timezone: d.timezone, country: d.country_code || d.country, city: d.city, ip: d.ip }) },
+  ];
   const MIN_RECHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
   let cachedInfo = null;
+  let onChangeCallback = null;
 
   async function fetchIPInfo() {
-    try {
-      const response = await fetch(API_URL);
-      if (!response.ok) {
-        console.warn('[IpTimezone] API returned status', response.status);
-        return null;
+    for (const api of API_URLS) {
+      try {
+        const response = await fetch(api.url);
+        if (!response.ok) {
+          console.warn('[IpTimezone] API', api.url, 'returned status', response.status);
+          continue;
+        }
+        const data = await response.json();
+        const parsed = api.parse(data);
+        const info = {
+          timezone: parsed.timezone || null,
+          country: parsed.country || null,
+          city: parsed.city || null,
+          ip: parsed.ip || null,
+          lastChecked: Date.now()
+        };
+        const oldTz = cachedInfo ? cachedInfo.timezone : null;
+        cachedInfo = info;
+        await browser.storage.local.set({ [STORAGE_KEY]: info });
+        console.log('[IpTimezone] Updated via', api.url, ':', info.timezone, info.country, info.city);
+        if (onChangeCallback && info.timezone !== oldTz) {
+          onChangeCallback(info);
+        }
+        return info;
+      } catch (e) {
+        console.warn('[IpTimezone] Fetch from', api.url, 'failed:', e.message);
+        continue;
       }
-      const data = await response.json();
-      const info = {
-        timezone: data.timezone || null,
-        country: data.country_code || data.country || null,
-        city: data.city || null,
-        ip: data.ip || null,
-        lastChecked: Date.now()
-      };
-      cachedInfo = info;
-      await browser.storage.local.set({ [STORAGE_KEY]: info });
-      console.log('[IpTimezone] Updated:', info.timezone, info.country, info.city);
-      return info;
-    } catch (e) {
-      console.warn('[IpTimezone] Fetch failed:', e.message);
-      return null;
     }
+    console.warn('[IpTimezone] All APIs failed');
+    return null;
   }
 
   async function maybeRefresh() {
@@ -80,5 +94,7 @@ const IpTimezone = (() => {
     }
   }
 
-  return { init, getIPInfo };
+  function onChange(cb) { onChangeCallback = cb; }
+
+  return { init, getIPInfo, onChange };
 })();

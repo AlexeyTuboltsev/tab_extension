@@ -1,6 +1,7 @@
 const TabInterceptor = (() => {
   const exemptTabs = new Set();
   const processingTabs = new Set();
+  let cachedTimezone = null; // Used by background.js for dynamic content script registration
   function shouldReplaceTab(details, currentCookieStoreId, tracked) {
     if (currentCookieStoreId === 'firefox-default') return true;
     if (tracked && (!tracked.url || tracked.url === 'about:blank' || tracked.url === 'about:newtab' || tracked.url === '')) return true;
@@ -87,14 +88,18 @@ const TabInterceptor = (() => {
     );
     return { requestHeaders: headers };
   }
-  function onHeadersReceived(details) {
-    const url = details.url;
-    if (!url || !RuleEngine.isSharedProvider(url)) return {};
-    const headers = details.responseHeaders.filter(
-      h => h.name.toLowerCase() !== 'referrer-policy'
-    );
-    headers.push({ name: 'Referrer-Policy', value: 'no-referrer' });
-    return { responseHeaders: headers };
+  function onHeadersReceived(e) {
+    // Referrer stripping for shared providers
+    if (e.url && RuleEngine.isSharedProvider(e.url)) {
+      for (let i = e.responseHeaders.length - 1; i >= 0; i--) {
+        if (e.responseHeaders[i].name.toLowerCase() === 'referrer-policy') {
+          e.responseHeaders.splice(i, 1);
+        }
+      }
+      e.responseHeaders.push({ name: 'Referrer-Policy', value: 'no-referrer' });
+    }
+
+    return { responseHeaders: e.responseHeaders };
   }
   function addExemptTab(tabId) { exemptTabs.add(tabId); }
   function setup() {
@@ -105,5 +110,10 @@ const TabInterceptor = (() => {
     browser.webRequest.onBeforeSendHeaders.addListener(onBeforeSendHeaders, { urls: ['<all_urls>'], types: ['main_frame'] }, ['blocking', 'requestHeaders']);
     browser.webRequest.onHeadersReceived.addListener(onHeadersReceived, { urls: ['<all_urls>'], types: ['main_frame'] }, ['blocking', 'responseHeaders']);
   }
-  return { setup, addExemptTab };
+  return {
+    setup,
+    addExemptTab,
+    setTimezone(tz) { cachedTimezone = tz; },
+    _getCachedTimezone() { return cachedTimezone; },
+  };
 })();
