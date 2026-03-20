@@ -8,6 +8,7 @@
     TabInterceptor.setup();
     ContextMenu.setup();
     PageActionIndicator.setup();
+    IpTimezone.init();
     browser.storage.onChanged.addListener((changes) => {
       if (changes[STORAGE_KEYS.GLOBAL_RULES] || changes[STORAGE_KEYS.CONTAINER_RULES] || changes[STORAGE_KEYS.SAVED_CONTAINERS] || changes[STORAGE_KEYS.SHARED_PROVIDERS]) {
         RuleEngine.refresh();
@@ -42,6 +43,10 @@ async function handleMessage(message, sender) {
         return { seed: hashString(id) };
       }
       return { seed: 0 };
+    }
+    case 'getTimezone': {
+      const info = await IpTimezone.getIPInfo();
+      return { timezone: info?.timezone || null, country: info?.country || null };
     }
     case 'getState': {
       const containers = ContainerManager.getState();
