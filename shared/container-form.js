@@ -34,15 +34,6 @@ class ContainerForm {
   render() {
     this.el.replaceChildren();
     this.el.classList.add('cf-form');
-    if (this.onCog) {
-      const header = document.createElement('div'); header.className = 'cf-header';
-      const title = document.createElement('span'); title.className = 'cf-title';
-      title.textContent = this.mode === 'create' ? 'New Container' : 'Container Settings';
-      const cog = document.createElement('button'); cog.className = 'cf-cog'; cog.textContent = '\u2699';
-      cog.title = this.mode === 'edit' ? 'Close settings' : 'Settings';
-      cog.addEventListener('click', () => this.onCog());
-      header.appendChild(title); header.appendChild(cog); this.el.appendChild(header);
-    }
     this._addNameField();
     this._addColorField();
     this._addIconField();
@@ -70,12 +61,25 @@ class ContainerForm {
     this._validate();
   }
   _addNameField() {
-    const label = document.createElement('label');
-    const span = document.createElement('span'); span.className = 'cf-label'; span.textContent = 'Name'; label.appendChild(span);
-    const input = document.createElement('input'); input.type = 'text'; input.value = this.initialName;
+    const row = document.createElement('div');
+    row.className = 'cf-name-row';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = this.initialName;
+    input.placeholder = 'Container name';
     input.addEventListener('input', () => this._validate());
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') this._handleSave(); });
-    this._nameInput = input; label.appendChild(input); this.el.appendChild(label);
+    this._nameInput = input;
+    row.appendChild(input);
+    if (this.onCog) {
+      const cog = document.createElement('button');
+      cog.className = 'cf-cog';
+      cog.textContent = '\u2699';
+      cog.title = 'Container list';
+      cog.addEventListener('click', () => this.onCog());
+      row.appendChild(cog);
+    }
+    this.el.appendChild(row);
     const err = document.createElement('p'); err.className = 'cf-error cf-hidden'; this._nameError = err; this.el.appendChild(err);
   }
   _addColorField() {

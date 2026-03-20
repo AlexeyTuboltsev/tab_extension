@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fingerprint Signals</title>
+<style>
+  body { font-family: monospace; background: #fff; color: #222; padding: 24px; max-width: 800px; margin: 0 auto; }
+  h1 { font-size: 18px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 6px 10px; border-bottom: 1px solid #ddd; }
+  td:first-child { color: #666; width: 250px; }
+  td:last-child { word-break: break-all; }
+  .section { color: #0060df; font-weight: bold; padding-top: 16px; }
+</style>
+</head>
+<body>
+<h1>Browser Fingerprint Signals</h1>
+<table id="results"></table>
+<script>
+const t = document.getElementById('results');
+function add(label, value, section) {
+  if (section) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 2; td.className = 'section'; td.textContent = section;
+    tr.appendChild(td); t.appendChild(tr);
+  }
+  const tr = document.createElement('tr');
+  const td1 = document.createElement('td'); td1.textContent = label;
+  const td2 = document.createElement('td'); td2.textContent = String(value);
+  tr.appendChild(td1); tr.appendChild(td2); t.appendChild(tr);
+}
+
+// Timezone
+add('Timezone', Intl.DateTimeFormat().resolvedOptions().timeZone, 'TIMEZONE & LOCALE');
+add('Timezone offset (min)', new Date().getTimezoneOffset());
+add('Locale', navigator.language);
+add('Languages', navigator.languages.join(', '));
+
+// Navigator
+add('User Agent', navigator.userAgent, 'NAVIGATOR');
+add('Platform', navigator.platform);
+add('CPU cores', navigator.hardwareConcurrency);
+add('Device Memory (GB)', navigator.deviceMemory || 'hidden');
+add('Do Not Track', navigator.doNotTrack);
+add('Cookies enabled', navigator.cookieEnabled);
+add('Max touch points', navigator.maxTouchPoints);
+
+// Screen
+add('Screen', screen.width + 'x' + screen.height, 'SCREEN');
+add('Available', screen.availWidth + 'x' + screen.availHeight);
+add('Color depth', screen.colorDepth);
+add('Pixel ratio', window.devicePixelRatio);
+add('Window inner', window.innerWidth + 'x' + window.innerHeight);
+add('Window outer', window.outerWidth + 'x' + window.outerHeight);
+
+// WebGL
+try {
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+  if (gl) {
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    add('WebGL Vendor', dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : 'hidden', 'WEBGL');
+    add('WebGL Renderer', dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'hidden');
+    add('WebGL Version', gl.getParameter(gl.VERSION));
+  }
+} catch(e) { add('WebGL', 'blocked', 'WEBGL'); }
+
+// Canvas
+try {
+  const c = document.createElement('canvas'); c.width = 200; c.height = 50;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f60'; ctx.fillRect(10, 10, 100, 30);
+  ctx.fillStyle = '#069'; ctx.font = '14px Arial';
+  ctx.fillText('fingerprint test 🎨', 15, 30);
+  const hash = c.toDataURL().slice(-40);
+  add('Canvas hash (last 40)', hash, 'CANVAS');
+} catch(e) { add('Canvas', 'blocked', 'CANVAS'); }
+
+// AudioContext
+try {
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ac.createOscillator(); const comp = ac.createDynamicsCompressor();
+  const analyser = ac.createAnalyser();
+  osc.connect(comp); comp.connect(analyser); analyser.connect(ac.destination);
+  add('AudioContext sample rate', ac.sampleRate, 'AUDIO');
+  add('AudioContext state', ac.state);
+  ac.close();
+} catch(e) { add('AudioContext', 'blocked', 'AUDIO'); }
+
+// Fonts (basic probe)
+add('Font smoothing', document.fonts ? 'FontFaceSet API available' : 'not available', 'FONTS');
+
+// Performance
+add('performance.now precision', (() => {
+  const samples = [];
+  for (let i = 0; i < 100; i++) samples.push(performance.now());
+  const diffs = samples.slice(1).map((v,i) => v - samples[i]).filter(d => d > 0);
+  return diffs.length > 0 ? Math.min(...diffs).toFixed(6) + ' ms' : 'too coarse to measure';
+})(), 'TIMING');
+
+// Storage
+add('localStorage', typeof localStorage !== 'undefined' ? 'available' : 'blocked', 'STORAGE');
+add('sessionStorage', typeof sessionStorage !== 'undefined' ? 'available' : 'blocked');
+add('IndexedDB', typeof indexedDB !== 'undefined' ? 'available' : 'blocked');
+</script>
+</body>
+</html>

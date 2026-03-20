@@ -1,16 +1,13 @@
 /* Container settings form — shared between popup and options */
 
-.cf-header {
+.cf-name-row {
   display: flex;
+  gap: 6px;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
-
-.cf-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
+.cf-name-row input[type="text"] {
+  flex: 1;
 }
 
 .cf-cog {
@@ -21,12 +18,13 @@
   cursor: pointer;
   padding: 2px 6px;
   border-radius: 3px;
+  flex-shrink: 0;
 }
 .cf-cog:hover { color: #fff; background: var(--accent); }
 
 .cf-form label {
   display: block;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .cf-label {
