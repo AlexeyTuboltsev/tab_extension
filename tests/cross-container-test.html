@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cross-Container Fingerprint Comparison</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #fff; color: #222; padding: 24px; max-width: 960px; margin: 0 auto;
+    line-height: 1.5;
+  }
+  h1 { color: #0060df; margin-bottom: 8px; font-size: 24px; }
+  h2 { color: #0060df; margin: 24px 0 12px; font-size: 18px; border-bottom: 2px solid #0060df; padding-bottom: 4px; }
+  p { margin-bottom: 12px; }
+  .instructions {
+    background: #f0f6ff; border: 1px solid #0060df; border-radius: 6px;
+    padding: 16px; margin: 16px 0;
+  }
+  .instructions ol { margin-left: 20px; }
+  .instructions li { margin-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th { text-align: left; padding: 6px 10px; background: #f5f5f5; border-bottom: 2px solid #ddd; font-size: 13px; }
+  td { padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 13px; }
+  td.key { font-weight: 600; width: 220px; }
+  td.value { font-family: monospace; word-break: break-all; max-width: 280px; }
+  .differ { background: #e6ffe6; }
+  .same-bad { background: #ffe6e6; }
+  .btn {
+    display: inline-block; padding: 8px 16px; background: #0060df; color: #fff;
+    border: none; border-radius: 4px; cursor: pointer; font-size: 13px; margin-right: 8px; margin-bottom: 8px;
+  }
+  .btn:hover { background: #004ebc; }
+  textarea {
+    width: 100%; height: 140px; font-family: monospace; font-size: 12px;
+    padding: 10px; border: 1px solid #ccc; border-radius: 4px; resize: vertical;
+  }
+  .report-box {
+    background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;
+    padding: 10px; font-family: monospace; font-size: 12px;
+    max-height: 200px; overflow-y: auto; word-break: break-all; margin-bottom: 16px;
+  }
+  .summary-box {
+    background: #f0f6ff; border: 1px solid #0060df; border-radius: 6px;
+    padding: 16px; margin: 16px 0; font-size: 16px;
+  }
+  .pass { color: #1a7f37; font-weight: 700; }
+  .fail { color: #cf222e; font-weight: 700; }
+  .legend { margin-bottom: 12px; }
+  .legend span { padding: 2px 8px; margin-right: 8px; font-size: 13px; }
+  #canvas-test { display: none; }
+  #webgl-test { display: none; }
+</style>
+</head>
+<body>
+
+<h1>Cross-Container Fingerprint Comparison</h1>
+
+<div class="instructions">
+  <ol>
+    <li>Open this page in <strong>Container A</strong>.</li>
+    <li>Click <strong>"Generate Report"</strong> and copy the JSON output.</li>
+    <li>Open this page in <strong>Container B</strong>.</li>
+    <li>Click <strong>"Generate Report"</strong> in Container B as well.</li>
+    <li>Paste Container A's JSON into the textarea in Container B (or vice versa).</li>
+    <li>Click <strong>"Compare"</strong> to see which fingerprint signals differ.</li>
+  </ol>
+</div>
+
+<button class="btn" id="btn-generate">Generate Report</button>
+
+<div id="report-output" style="display:none;">
+  <h2>Your Report (copy this)</h2>
+  <div class="report-box" id="report-json"></div>
+  <button class="btn" id="btn-copy-report">Copy to Clipboard</button>
+</div>
+
+<div id="compare-section" style="margin-top:24px;">
+  <h2>Paste Other Container's Report</h2>
+  <textarea id="other-report" placeholder="Paste the JSON report from the other container here..."></textarea>
+  <br><br>
+  <button class="btn" id="btn-compare">Compare</button>
+</div>
+
+<div id="comparison-results"></div>
+
+<canvas id="canvas-test" width="280" height="60"></canvas>
+<canvas id="webgl-test" width="64" height="64"></canvas>
+
+<script>
+(function() {
+  'use strict';
+
+  function simpleHash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + ch;
+      hash = hash & hash;
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
+
+  const FINGERPRINT_FONTS = [
+    "Andale Mono","AppleGothic","Arial","Arial Black","Arial Hebrew","Arial MT",
+    "Arial Narrow","Arial Rounded MT Bold","Arial Unicode MS",
+    "Bitstream Vera Sans Mono","Book Antiqua","Bookman Old Style",
+    "Calibri","Cambria","Cambria Math","Century","Century Gothic",
+    "Century Schoolbook","Comic Sans","Comic Sans MS","Consolas",
+    "Courier","Courier New","Garamond","Geneva","Georgia","Helvetica",
+    "Helvetica Neue","Impact","Lucida Bright","Lucida Calligraphy",
+    "Lucida Console","Lucida Fax","LUCIDA GRANDE","Lucida Handwriting",
+    "Lucida Sans","Lucida Sans Typewriter","Lucida Sans Unicode",
+    "Microsoft Sans Serif","Monaco","Monotype Corsiva","MS Gothic",
+    "MS Outlook","MS PGothic","MS Reference Sans Serif","MS Sans Serif",
+    "MS Serif","MYRIAD","MYRIAD PRO","Palatino","Palatino Linotype",
+    "Segoe Print","Segoe Script","Segoe UI","Segoe UI Light",
+    "Segoe UI Semibold","Segoe UI Symbol","Tahoma","Times",
+    "Times New Roman","Times New Roman PS","Trebuchet MS",
+    "Verdana","Wingdings","Wingdings 2","Wingdings 3"
+  ];
+
+  function detectFonts() {
+    const baseFonts = ['monospace', 'serif', 'sans-serif'];
+    const testString = 'mmmmmmmmmmlli';
+    const testSize = '72px';
+    const container = document.createElement('div');
+    container.style.cssText = 'position:absolute;left:-9999px;top:-9999px;visibility:hidden;';
+    document.body.appendChild(container);
+    const baseWidths = {};
+    for (const base of baseFonts) {
+      const span = document.createElement('span');
+      span.style.cssText = 'font-size:' + testSize + ';font-family:' + base + ';';
+      span.textContent = testString;
+      container.appendChild(span);
+      baseWidths[base] = span.offsetWidth;
+    }
+    container.innerHTML = '';
+    const detected = [];
+    for (const font of FINGERPRINT_FONTS) {
+      let found = false;
+      for (const base of baseFonts) {
+        const span = document.createElement('span');
+        span.style.cssText = 'font-size:' + testSize + ';font-family:"' + font + '",' + base + ';';
+        span.textContent = testString;
+        container.appendChild(span);
+        if (span.offsetWidth !== baseWidths[base]) found = true;
+        container.removeChild(span);
+        if (found) break;
+      }
+      if (found) detected.push(font);
+    }
+    document.body.removeChild(container);
+    return detected;
+  }
+
+  function getCanvasHash() {
+    const canvas = document.getElementById('canvas-test');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 70, 60);
+    ctx.fillStyle = '#0f0'; ctx.fillRect(70, 0, 70, 60);
+    ctx.fillStyle = '#00f'; ctx.fillRect(140, 0, 70, 60);
+    ctx.fillStyle = '#ff0'; ctx.fillRect(210, 0, 70, 60);
+    const grad = ctx.createLinearGradient(0, 0, 280, 0);
+    grad.addColorStop(0, 'rgba(255,0,0,0.5)');
+    grad.addColorStop(1, 'rgba(0,0,255,0.5)');
+    ctx.fillStyle = grad; ctx.fillRect(0, 30, 280, 30);
+    ctx.fillStyle = '#222'; ctx.font = '14px Arial'; ctx.fillText('Fingerprint Test', 10, 20);
+    ctx.font = '16px serif'; ctx.fillText('\u{1F600}', 10, 50);
+    return simpleHash(canvas.toDataURL());
+  }
+
+  function getWebGLInfo() {
+    const canvas = document.getElementById('webgl-test');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return { vendor: null, renderer: null, pixelsHash: null };
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    const vendor = debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+    const renderer = debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    const vSrc = 'attribute vec2 p;void main(){gl_Position=vec4(p,0,1);}';
+    const fSrc = 'precision mediump float;void main(){gl_FragColor=vec4(0.2,0.6,0.9,1.0);}';
+    function compile(src, type) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(vSrc, gl.VERTEX_SHADER));
+    gl.attachShader(prog, compile(fSrc, gl.FRAGMENT_SHADER));
+    gl.linkProgram(prog); gl.useProgram(prog);
+    const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0.5,-0.5,-0.5,0.5,-0.5]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const pixels = new Uint8Array(64*64*4);
+    gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    return { vendor: vendor, renderer: renderer, pixelsHash: simpleHash(pixels.join(',')) };
+  }
+
+  function getAudioHash() {
+    return new Promise(function(resolve) {
+      try {
+        const ac = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ac.createOscillator();
+        const comp = ac.createDynamicsCompressor();
+        const analyser = ac.createAnalyser();
+        analyser.fftSize = 256;
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(10000, ac.currentTime);
+        comp.threshold.setValueAtTime(-50, ac.currentTime);
+        comp.knee.setValueAtTime(40, ac.currentTime);
+        comp.ratio.setValueAtTime(12, ac.currentTime);
+        comp.attack.setValueAtTime(0, ac.currentTime);
+        comp.release.setValueAtTime(0.25, ac.currentTime);
+        osc.connect(comp); comp.connect(analyser); analyser.connect(ac.destination);
+        osc.start(0);
+        setTimeout(function() {
+          const freq = new Float32Array(analyser.frequencyBinCount);
+          analyser.getFloatFrequencyData(freq);
+          osc.stop(); ac.close();
+          resolve(simpleHash(Array.from(freq).map(function(v) { return v.toFixed(4); }).join(',')));
+        }, 100);
+      } catch (e) { resolve(null); }
+    });
+  }
+
+  async function generateReport() {
+    const webgl = getWebGLInfo();
+    const canvasHash = getCanvasHash();
+    const audioHash = await getAudioHash();
+    const fonts = detectFonts();
+
+    return {
+      timestamp: new Date().toISOString(),
+      timezone: {
+        intlTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timezoneOffset: new Date().getTimezoneOffset()
+      },
+      navigator: {
+        platform: navigator.platform,
+        hardwareConcurrency: navigator.hardwareConcurrency,
+        deviceMemory: navigator.deviceMemory || 'N/A',
+        language: navigator.language,
+        languages: navigator.languages ? navigator.languages.join(', ') : 'N/A'
+      },
+      screen: {
+        width: screen.width,
+        height: screen.height,
+        colorDepth: screen.colorDepth,
+        devicePixelRatio: window.devicePixelRatio,
+        availWidth: screen.availWidth,
+        availHeight: screen.availHeight
+      },
+      canvas: { hash: canvasHash },
+      webgl: {
+        vendor: webgl.vendor,
+        renderer: webgl.renderer,
+        pixelsHash: webgl.pixelsHash
+      },
+      audio: { hash: audioHash },
+      fonts: {
+        detected: fonts,
+        count: fonts.length,
+        hash: simpleHash(fonts.join(','))
+      }
+    };
+  }
+
+  // Expectations for what SHOULD differ between containers
+  const expectations = {
+    'canvas.hash': { shouldDiffer: true, label: 'SHOULD differ (noise active)' },
+    'webgl.pixelsHash': { shouldDiffer: true, label: 'SHOULD differ (noise active)' },
+    'webgl.vendor': { shouldDiffer: false, label: 'Same unless profiles implemented' },
+    'webgl.renderer': { shouldDiffer: false, label: 'Same unless profiles implemented' },
+    'audio.hash': { shouldDiffer: true, label: 'SHOULD differ (noise active)' },
+    'timezone.intlTimezone': { shouldDiffer: null, label: 'MAY differ (depends on VPN)' },
+    'timezone.timezoneOffset': { shouldDiffer: null, label: 'MAY differ (depends on VPN)' },
+    'navigator.platform': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'navigator.hardwareConcurrency': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'navigator.deviceMemory': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'navigator.language': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'navigator.languages': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'screen.width': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'screen.height': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'screen.colorDepth': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'screen.devicePixelRatio': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'screen.availWidth': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'screen.availHeight': { shouldDiffer: false, label: 'Will differ once profiles are implemented' },
+    'fonts.hash': { shouldDiffer: false, label: 'Will differ once font mimicry is implemented' },
+    'fonts.count': { shouldDiffer: false, label: 'Will differ once font mimicry is implemented' }
+  };
+
+  function renderComparison(ours, theirs) {
+    const el = document.getElementById('comparison-results');
+
+    function flatten(obj, prefix) {
+      const result = {};
+      for (const key of Object.keys(obj)) {
+        const path = prefix ? prefix + '.' + key : key;
+        const val = obj[key];
+        if (key === 'detected' && Array.isArray(val)) {
+          result[path] = val.join(', ');
+        } else if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
+          Object.assign(result, flatten(val, path));
+        } else {
+          result[path] = String(val);
+        }
+      }
+      return result;
+    }
+
+    const ourFlat = flatten(ours, '');
+    const theirFlat = flatten(theirs, '');
+
+    // Skip timestamp
+    delete ourFlat['timestamp'];
+    delete theirFlat['timestamp'];
+
+    const allKeys = [...new Set([...Object.keys(ourFlat), ...Object.keys(theirFlat)])].sort();
+
+    let differCount = 0;
+    let sameCount = 0;
+
+    let html = '<h2>Comparison Results</h2>';
+    html += '<div class="legend"><span style="background:#e6ffe6;">Green = different (good)</span> <span style="background:#ffe6e6;">Red = same (may be bad)</span> <span style="background:#fff;border:1px solid #ddd;">White = expected same / N/A</span></div>';
+    html += '<table><tr><th>Property</th><th>This Container</th><th>Other Container</th><th>Status</th><th>Expected</th></tr>';
+
+    for (const key of allKeys) {
+      if (key === 'fonts.detected') continue; // Skip the full font list, show hash instead
+      const ours_val = ourFlat[key] || '';
+      const theirs_val = theirFlat[key] || '';
+      const differs = ours_val !== theirs_val;
+      const exp = expectations[key];
+
+      let cls = '';
+      let statusText = '';
+
+      if (differs) {
+        differCount++;
+        cls = 'differ';
+        statusText = '<span class="pass">DIFFERENT</span>';
+      } else {
+        sameCount++;
+        if (exp && exp.shouldDiffer === true) {
+          cls = 'same-bad';
+          statusText = '<span class="fail">SAME (should differ!)</span>';
+        } else {
+          statusText = '<span style="color:#999;">same</span>';
+        }
+      }
+
+      const expLabel = exp ? exp.label : '';
+
+      html += '<tr><td class="key">' + key + '</td><td class="value ' + cls + '">' + ours_val + '</td><td class="value ' + cls + '">' + theirs_val + '</td><td>' + statusText + '</td><td style="font-size:12px;color:#666;">' + expLabel + '</td></tr>';
+    }
+    html += '</table>';
+
+    html = '<div class="summary-box"><strong>' + differCount + ' values differ</strong>, ' + sameCount + ' values are the same</div>' + html;
+
+    el.innerHTML = html;
+  }
+
+  let currentReport = null;
+
+  document.getElementById('btn-generate').addEventListener('click', async function() {
+    this.textContent = 'Generating...';
+    this.disabled = true;
+    currentReport = await generateReport();
+    const json = JSON.stringify(currentReport, null, 2);
+    document.getElementById('report-json').textContent = json;
+    document.getElementById('report-output').style.display = 'block';
+    this.textContent = 'Generate Report';
+    this.disabled = false;
+  });
+
+  document.getElementById('btn-copy-report').addEventListener('click', function() {
+    if (!currentReport) return;
+    navigator.clipboard.writeText(JSON.stringify(currentReport, null, 2)).then(function() {
+      alert('Copied to clipboard!');
+    });
+  });
+
+  document.getElementById('btn-compare').addEventListener('click', async function() {
+    const otherJson = document.getElementById('other-report').value.trim();
+    if (!otherJson) {
+      alert('Please paste the other container\'s report first.');
+      return;
+    }
+    let other;
+    try {
+      other = JSON.parse(otherJson);
+    } catch (e) {
+      alert('Invalid JSON. Please paste a valid report.');
+      return;
+    }
+    if (!currentReport) {
+      currentReport = await generateReport();
+    }
+    renderComparison(currentReport, other);
+  });
+})();
+</script>
+</body>
+</html>
