@@ -8,6 +8,7 @@ rm -f "$OUT"
 zip -r "$OUT" \
   manifest.json \
   background/ \
+  content/ \
   shared/ \
   popup/ \
   options/ \
