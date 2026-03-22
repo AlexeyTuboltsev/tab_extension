@@ -16,7 +16,7 @@ function loadIIFE(filePath, varName) {
   return fn();
 }
 
-// hashString from background.js
+// hashString from background/container-env.js
 function hashString(str) {
   let hash = 5381;
   for (let i = 0; i < str.length; i++) {
@@ -26,7 +26,7 @@ function hashString(str) {
   return Math.abs(hash);
 }
 
-// noise function from fingerprint-noise.js
+// noise function from content/container-env.js
 function noise(s, index) {
   let h = s ^ index;
   h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);

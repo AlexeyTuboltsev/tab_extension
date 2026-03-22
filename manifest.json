@@ -22,6 +22,7 @@
       "background/storage-manager.js",
       "background/container-manager.js",
       "background/rule-engine.js",
+      "background/container-env.js",
       "background/tab-interceptor.js",
       "background/context-menu.js",
       "background/page-action-indicator.js",
@@ -41,16 +42,6 @@
     "48": "icons/icon-48.svg"
   },
   "content_scripts": [{
-    "matches": ["<all_urls>"],
-    "js": ["content/fingerprint-noise.js"],
-    "run_at": "document_start",
-    "all_frames": true
-  }, {
-    "matches": ["<all_urls>"],
-    "js": ["content/timezone-spoof.js"],
-    "run_at": "document_start",
-    "all_frames": true
-  }, {
     "matches": ["<all_urls>"],
     "js": ["content/profile-spoof.js"],
     "run_at": "document_start",

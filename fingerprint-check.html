@@ -546,6 +546,7 @@ function updateCombinedHash() {
   const color = hashToColor(combined);
   document.getElementById('combinedHash').textContent = combined;
   document.getElementById('combinedColor').style.backgroundColor = color;
+  console.log('__CTM_TEST__' + JSON.stringify(allResults));
 }
 
 // Initial compute (audio will call again after async completes)
