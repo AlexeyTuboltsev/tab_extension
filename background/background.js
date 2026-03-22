@@ -24,7 +24,14 @@ async function loadProfiles() {
     TabInterceptor.setup();
     ContextMenu.setup();
     PageActionIndicator.setup();
-    IpTimezone.init();
+    await IpTimezone.init();
+    await registerTimezoneScript();
+    IpTimezone.onChange(async (info) => {
+      console.log('[TZ] IP changed — re-registering timezone script for', info.timezone);
+      await registerTimezoneScript();
+    });
+    // Recheck IP on every new tab to catch VPN switches
+    browser.tabs.onCreated.addListener(() => IpTimezone.maybeRefresh());
     browser.storage.onChanged.addListener((changes) => {
       if (changes[STORAGE_KEYS.GLOBAL_RULES] || changes[STORAGE_KEYS.CONTAINER_RULES] || changes[STORAGE_KEYS.SAVED_CONTAINERS] || changes[STORAGE_KEYS.SHARED_PROVIDERS]) {
         RuleEngine.refresh();
@@ -39,6 +46,91 @@ async function loadProfiles() {
     console.error('Failed to initialize Container Tab Manager:', e);
   }
 })();
+
+let registeredTzScript = null;
+
+async function registerTimezoneScript() {
+  // Unregister previous if exists
+  if (registeredTzScript) {
+    await registeredTzScript.unregister();
+    registeredTzScript = null;
+  }
+
+  const info = await IpTimezone.getIPInfo();
+  const tz = info && info.timezone ? info.timezone : null;
+  if (!tz) return;
+
+  TabInterceptor.setTimezone(tz);
+
+  // Precompute all timezone values as primitives in the background,
+  // then bake them into a dynamic content script registered via contentScripts.register().
+  // Uses cloneInto + wrappedJSObject to patch page-visible Date/Intl prototypes
+  // synchronously at document_start — before any page script runs.
+  const now = new Date();
+  const utcStr = now.toLocaleString('en-US', { timeZone: 'UTC' });
+  const tzStr = now.toLocaleString('en-US', { timeZone: tz });
+  const offset = (new Date(utcStr) - new Date(tzStr)) / 60000;
+
+  // Get GMT string and long name
+  const sign = offset <= 0 ? '+' : '-';
+  const absOff = Math.abs(offset);
+  const gmtString = 'GMT' + sign + String(Math.floor(absOff / 60)).padStart(2, '0') + String(absOff % 60).padStart(2, '0');
+
+  let tzLongName = '';
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'long' });
+    const parts = fmt.formatToParts(now);
+    const tzPart = parts.find(p => p.type === 'timeZoneName');
+    if (tzPart) tzLongName = tzPart.value;
+  } catch (e) {}
+
+  // Dynamic script uses ONLY primitive literals — no cross-compartment object access
+  const code = `
+(function() {
+  var w = window.wrappedJSObject;
+  var OFFSET = ${offset};
+  var TZ = "${tz}";
+  var GMT = "${gmtString}";
+  var LONG = "${tzLongName}";
+  var RE = /GMT[+-]\\d{4}\\s*\\([^)]*\\)/;
+  var REPLACE = GMT + ' (' + LONG + ')';
+
+  var origGTZO = w.Date.prototype.getTimezoneOffset;
+  var origToStr = w.Date.prototype.toString;
+  var origToTS = w.Date.prototype.toTimeString;
+  var origRO = w.Intl.DateTimeFormat.prototype.resolvedOptions;
+
+  w.Date.prototype.getTimezoneOffset = cloneInto(function() {
+    return OFFSET;
+  }, w, {cloneFunctions: true});
+
+  w.Date.prototype.toString = cloneInto(function() {
+    return origToStr.call(this).replace(RE, REPLACE);
+  }, w, {cloneFunctions: true});
+
+  w.Date.prototype.toTimeString = cloneInto(function() {
+    return origToTS.call(this).replace(RE, REPLACE);
+  }, w, {cloneFunctions: true});
+
+  w.Intl.DateTimeFormat.prototype.resolvedOptions = cloneInto(function() {
+    var r = origRO.call(this);
+    r.timeZone = TZ;
+    return r;
+  }, w, {cloneFunctions: true});
+})();
+  `;
+
+  if (registeredTzScript) {
+    await registeredTzScript.unregister();
+  }
+  registeredTzScript = await browser.contentScripts.register({
+    matches: ['<all_urls>'],
+    js: [{ code }],
+    runAt: 'document_start',
+    allFrames: true,
+  });
+  console.log('[TZ] Registered dynamic timezone script for:', tz, 'offset:', offset);
+}
 
 function hashString(str) {
   let hash = 5381;

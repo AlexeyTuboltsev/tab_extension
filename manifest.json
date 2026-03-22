@@ -12,6 +12,7 @@
     "menus",
     "storage",
     "idle",
+    "webNavigation",
     "<all_urls>"
   ],
   "background": {
