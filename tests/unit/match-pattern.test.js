@@ -3,31 +3,47 @@ const MatchPattern = loadIIFE('shared/match-pattern.js', 'MatchPattern');
 
 describe('MatchPattern.parse', () => {
   test('parses simple domain', () => {
-    expect(MatchPattern.parse('amazon.com')).toEqual({ domain: 'amazon.com', path: null, anyTLD: false });
+    expect(MatchPattern.parse('amazon.com')).toEqual({ domain: 'amazon.com', path: null, port: null, anyTLD: false });
   });
 
   test('parses domain with path', () => {
-    expect(MatchPattern.parse('google.com/maps')).toEqual({ domain: 'google.com', path: '/maps', anyTLD: false });
+    expect(MatchPattern.parse('google.com/maps')).toEqual({ domain: 'google.com', path: '/maps', port: null, anyTLD: false });
   });
 
   test('parses wildcard TLD', () => {
-    expect(MatchPattern.parse('amazon.*')).toEqual({ domain: 'amazon', path: null, anyTLD: true });
+    expect(MatchPattern.parse('amazon.*')).toEqual({ domain: 'amazon', path: null, port: null, anyTLD: true });
   });
 
   test('strips scheme', () => {
-    expect(MatchPattern.parse('https://example.com')).toEqual({ domain: 'example.com', path: null, anyTLD: false });
+    expect(MatchPattern.parse('https://example.com')).toEqual({ domain: 'example.com', path: null, port: null, anyTLD: false });
   });
 
   test('strips trailing slash', () => {
-    expect(MatchPattern.parse('example.com/')).toEqual({ domain: 'example.com', path: null, anyTLD: false });
+    expect(MatchPattern.parse('example.com/')).toEqual({ domain: 'example.com', path: null, port: null, anyTLD: false });
   });
 
   test('strips trailing wildcard path', () => {
-    expect(MatchPattern.parse('example.com/*')).toEqual({ domain: 'example.com', path: null, anyTLD: false });
+    expect(MatchPattern.parse('example.com/*')).toEqual({ domain: 'example.com', path: null, port: null, anyTLD: false });
   });
 
   test('lowercases', () => {
-    expect(MatchPattern.parse('EXAMPLE.COM')).toEqual({ domain: 'example.com', path: null, anyTLD: false });
+    expect(MatchPattern.parse('EXAMPLE.COM')).toEqual({ domain: 'example.com', path: null, port: null, anyTLD: false });
+  });
+
+  test('parses domain with port', () => {
+    expect(MatchPattern.parse('example.com:8080')).toEqual({ domain: 'example.com', path: null, port: '8080', anyTLD: false });
+  });
+
+  test('parses IP with port', () => {
+    expect(MatchPattern.parse('127.0.0.1:18789')).toEqual({ domain: '127.0.0.1', path: null, port: '18789', anyTLD: false });
+  });
+
+  test('parses domain with port and path', () => {
+    expect(MatchPattern.parse('example.com:3000/api')).toEqual({ domain: 'example.com', path: '/api', port: '3000', anyTLD: false });
+  });
+
+  test('parses scheme + domain + port', () => {
+    expect(MatchPattern.parse('http://127.0.0.1:18789')).toEqual({ domain: '127.0.0.1', path: null, port: '18789', anyTLD: false });
   });
 
   test('rejects empty', () => {
@@ -150,6 +166,36 @@ describe('MatchPattern.matches', () => {
     });
   });
 
+  describe('port matching', () => {
+    test('pattern with port matches URL with same port', () => {
+      expect(MatchPattern.matches('http://127.0.0.1:18789/', '127.0.0.1:18789')).toBe(true);
+    });
+
+    test('pattern with port does not match URL with different port', () => {
+      expect(MatchPattern.matches('http://127.0.0.1:3000/', '127.0.0.1:18789')).toBe(false);
+    });
+
+    test('pattern with port does not match URL with no port', () => {
+      expect(MatchPattern.matches('http://example.com/', 'example.com:8080')).toBe(false);
+    });
+
+    test('pattern without port matches URL with any port', () => {
+      expect(MatchPattern.matches('http://example.com:8080/', 'example.com')).toBe(true);
+      expect(MatchPattern.matches('http://example.com:3000/', 'example.com')).toBe(true);
+      expect(MatchPattern.matches('http://example.com/', 'example.com')).toBe(true);
+    });
+
+    test('port + path matching', () => {
+      expect(MatchPattern.matches('http://localhost.localdomain:3000/api/data', 'localhost.localdomain:3000/api')).toBe(true);
+      expect(MatchPattern.matches('http://localhost.localdomain:8080/api/data', 'localhost.localdomain:3000/api')).toBe(false);
+    });
+
+    test('port + subdomain matching', () => {
+      expect(MatchPattern.matches('http://app.example.com:8080/', 'example.com:8080')).toBe(true);
+      expect(MatchPattern.matches('http://app.example.com:9090/', 'example.com:8080')).toBe(false);
+    });
+  });
+
   describe('edge cases', () => {
     test('null/undefined url', () => {
       expect(MatchPattern.matches(null, 'example.com')).toBe(false);
@@ -231,6 +277,20 @@ describe('MatchPattern.patternsOverlap', () => {
 
     test('different paths do not overlap', () => {
       expect(MatchPattern.patternsOverlap('google.com/maps', 'google.com/search')).toBe(false);
+    });
+  });
+
+  describe('port overlap', () => {
+    test('same port overlaps', () => {
+      expect(MatchPattern.patternsOverlap('example.com:8080', 'example.com:8080')).toBe(true);
+    });
+
+    test('different ports do not overlap', () => {
+      expect(MatchPattern.patternsOverlap('example.com:8080', 'example.com:3000')).toBe(false);
+    });
+
+    test('no port overlaps with port (port is more specific)', () => {
+      expect(MatchPattern.patternsOverlap('example.com', 'example.com:8080')).toBe(true);
     });
   });
 
