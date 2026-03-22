@@ -1,0 +1,90 @@
+name: Sign & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump (patch/minor/major) or "none" to use current version'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - none
+
+jobs:
+  sign:
+    name: Build, Sign & Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Bump version
+        if: inputs.bump != 'none'
+        run: |
+          VERSION=$(node -p "
+            const m = require('./manifest.json');
+            const [major, minor, patch] = m.version.split('.').map(Number);
+            if ('${{ inputs.bump }}' === 'major') return (major+1)+'.0.0';
+            if ('${{ inputs.bump }}' === 'minor') return major+'.'+(minor+1)+'.0';
+            return major+'.'+minor+'.'+(patch+1);
+          ")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('manifest.json','utf8'));
+            m.version = '$VERSION';
+            fs.writeFileSync('manifest.json', JSON.stringify(m, null, 2) + '\n');
+          "
+          echo "Bumped to $VERSION"
+
+      - name: Read version
+        if: inputs.bump == 'none'
+        run: |
+          VERSION=$(node -p "require('./manifest.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Install web-ext
+        run: npm install -g web-ext
+
+      - name: Build .xpi
+        run: |
+          web-ext build \
+            --source-dir . \
+            --artifacts-dir ./artifacts \
+            --ignore-files tests/ .github/ .claude/ node_modules/ package.json package-lock.json \
+                           .gitignore .mcp.json .node-version .playwright-mcp/ \
+                           fingerprint-check.html CLAUDE.md README.md \
+            --overwrite-dest
+
+      - name: Sign with Mozilla
+        run: |
+          web-ext sign \
+            --source-dir . \
+            --artifacts-dir ./artifacts \
+            --api-key ${{ secrets.AMO_JWT_ISSUER }} \
+            --api-secret ${{ secrets.AMO_JWT_SECRET }} \
+            --channel unlisted \
+            --ignore-files tests/ .github/ .claude/ node_modules/ package.json package-lock.json \
+                           .gitignore .mcp.json .node-version .playwright-mcp/ \
+                           fingerprint-check.html CLAUDE.md README.md
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+
+      - name: Create GitHub Release
+        run: |
+          XPI=$(ls artifacts/*.xpi | head -1)
+          gh release create "v$VERSION" "$XPI" \
+            --title "v$VERSION" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
