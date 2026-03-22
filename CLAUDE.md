@@ -62,4 +62,27 @@ commands, consult these tools first, even if you believe you already know the an
   inside that container, not on the host.
 
 
+## Interactive Extension Testing (Claudezilla)
+
+A patched version of Claudezilla at `/home/lexey/claudezilla/` provides browser automation
+that works with our extension's container tab interception.
+
+### Setup (each session)
+1. Load Claudezilla as temporary add-on: `about:debugging` → Load Temporary Add-on →
+   `/home/lexey/claudezilla/extension/manifest.json`
+2. Click Claudezilla toolbar icon to connect
+3. Call `firefox_set_private_mode(false)` — extension doesn't work in private windows
+
+### Testing workflow
+- `firefox_create_window(url)` → extension intercepts, moves tab to container
+- `firefox_query_all_tabs()` → find the container tab by `cookieStoreId`
+- All commands (`get_content`, `evaluate`, `screenshot`, `click`, `type`, etc.)
+  accept any `tabId` — not limited to Claudezilla's pool window
+- After extension source changes: reload from `about:debugging`
+
+### Important
+- The patched Claudezilla is NOT from AMO — it's the local version with cross-window support
+- The native host shebang uses an absolute fnm node path (Firefox doesn't inherit shell PATH)
+- Content scripts may need a page navigation to inject on pre-existing tabs
+
 These are standing instructions. Do not wait to be reminded. Apply them every session.

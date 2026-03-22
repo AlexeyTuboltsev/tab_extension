@@ -1,0 +1,28 @@
+name: Tests
+on: [push, pull_request]
+
+jobs:
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm test
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone Claudezilla
+        run: git clone --depth 1 https://x-access-token:${{ secrets.CLAUDEZILLA_TOKEN }}@github.com/AlexeyTuboltsev/claudezilla.git /tmp/claudezilla
+
+      - name: Run E2E tests
+        env:
+          CLAUDEZILLA_DIR: /tmp/claudezilla
+        run: bash tests/e2e/run.sh

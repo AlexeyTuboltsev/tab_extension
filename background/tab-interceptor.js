@@ -1,7 +1,6 @@
 const TabInterceptor = (() => {
   const exemptTabs = new Set();
   const processingTabs = new Set();
-  let cachedTimezone = null; // Used by background.js for dynamic content script registration
   function shouldReplaceTab(details, currentCookieStoreId, tracked) {
     if (currentCookieStoreId === 'firefox-default') return true;
     if (tracked && (!tracked.url || tracked.url === 'about:blank' || tracked.url === 'about:newtab' || tracked.url === '')) return true;
@@ -40,6 +39,7 @@ const TabInterceptor = (() => {
     processingTabs.add(tabId);
     try {
       const tab = await browser.tabs.get(tabId);
+      await ContainerEnv.setCookieForUrl(url, targetCookieStoreId);
       const newTab = await browser.tabs.create({ url, cookieStoreId: targetCookieStoreId, index: replaceOldTab ? tab.index : tab.index + 1, active: true, windowId: tab.windowId });
       ContainerManager.trackTab(newTab.id, targetCookieStoreId, tab.id, url);
       if (replaceOldTab) await browser.tabs.remove(tabId).catch(() => {});
@@ -50,6 +50,7 @@ const TabInterceptor = (() => {
     try {
       const tab = await browser.tabs.get(tabId);
       const container = await ContainerManager.createEphemeral();
+      await ContainerEnv.setCookieForUrl(url, container.cookieStoreId);
       const newTab = await browser.tabs.create({ url, cookieStoreId: container.cookieStoreId, index: replaceOldTab ? tab.index : tab.index + 1, active: true, windowId: tab.windowId });
       ContainerManager.trackTab(newTab.id, container.cookieStoreId, tab.id, url);
       if (replaceOldTab) await browser.tabs.remove(tabId).catch(() => {});
@@ -113,7 +114,5 @@ const TabInterceptor = (() => {
   return {
     setup,
     addExemptTab,
-    setTimezone(tz) { cachedTimezone = tz; },
-    _getCachedTimezone() { return cachedTimezone; },
   };
 })();

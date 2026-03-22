@@ -5,6 +5,14 @@
   "scripts": {
     "test": "jest"
   },
+  "jest": {
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/tests/playwright/",
+      "/tests/e2e/",
+      "/.claude/"
+    ]
+  },
   "devDependencies": {
     "jest": "^30.3.0"
   }
