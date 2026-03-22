@@ -18,6 +18,7 @@ COPY tests/playwright/specs/ ./tests/playwright/specs/
 COPY manifest.json ./
 COPY background/ ./background/
 COPY content/ ./content/
+COPY data/ ./data/
 COPY shared/ ./shared/
 COPY popup/ ./popup/
 COPY options/ ./options/
