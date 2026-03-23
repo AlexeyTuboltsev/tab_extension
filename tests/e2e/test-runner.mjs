@@ -405,6 +405,91 @@ async function testAudioCrossContainer() {
     `tab1=${hash1}, tab2=${hash2}`);
 }
 
+async function testEphemeralCrossDomainIsolation() {
+  // Open example.com — extension should place it in an ephemeral container
+  const r1 = await sendCommand('createWindow', { url: 'http://example.com/' });
+  if (!r1.success) {
+    report('Ephemeral: cross-domain creates new container', false, 'createWindow failed');
+    return;
+  }
+
+  let tab1;
+  try {
+    tab1 = await waitForTab(t =>
+      (t.url || '').includes('example.com') && t.cookieStoreId !== 'firefox-default'
+    );
+  } catch (e) {
+    report('Ephemeral: cross-domain creates new container', false, 'First tab never appeared in container');
+    return;
+  }
+
+  const csid1 = tab1.cookieStoreId;
+  const tabId1 = tab1.id ?? tab1.tabId;
+
+  // Navigate that tab to a DIFFERENT domain.
+  // Extension should cancel, create a new ephemeral container.
+  try {
+    await sendCommand('navigate', { tabId: tabId1, url: 'http://example.org/' });
+  } catch (e) {
+    // navigate may throw if extension removes the tab — that's fine
+  }
+
+  let tab2;
+  try {
+    tab2 = await waitForTab(t =>
+      (t.url || '').includes('example.org') && t.cookieStoreId !== 'firefox-default'
+    );
+  } catch (e) {
+    report('Ephemeral: cross-domain creates new container', false, 'Second tab never appeared in container');
+    return;
+  }
+
+  const csid2 = tab2.cookieStoreId;
+  report('Ephemeral: cross-domain creates new container', csid1 !== csid2,
+    `domain1_csid=${csid1}, domain2_csid=${csid2}`);
+}
+
+async function testEphemeralSameDomainReuse() {
+  // Open a page in an ephemeral container
+  const r1 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?samedom=1' });
+  if (!r1.success) {
+    report('Ephemeral: same-domain reuses container', false, 'createWindow failed');
+    return;
+  }
+
+  let tab1;
+  try {
+    tab1 = await waitForTab(t =>
+      (t.url || '').includes('samedom=1') && t.cookieStoreId !== 'firefox-default'
+    );
+  } catch (e) {
+    report('Ephemeral: same-domain reuses container', false, 'Tab never appeared in container');
+    return;
+  }
+
+  const csid1 = tab1.cookieStoreId;
+  const tabId1 = tab1.id ?? tab1.tabId;
+
+  // Navigate the same tab to a different PATH on the SAME domain.
+  // Extension should reuse the ephemeral container (no domain change).
+  await sendCommand('navigate', { tabId: tabId1, url: 'http://127.0.0.1:8765/fingerprint-check.html?samedom=2' });
+  await sleep(3000);
+
+  // Find the tab that loaded samedom=2
+  const tabs = await sendCommand('queryAllTabs');
+  const allTabs = tabs.result?.tabs || tabs.result || [];
+  const tab2 = allTabs.find(t => (t.url || '').includes('samedom=2'));
+
+  if (!tab2) {
+    report('Ephemeral: same-domain reuses container', false, 'Navigated tab not found');
+    return;
+  }
+
+  const csid2 = tab2.cookieStoreId;
+  report('Ephemeral: same-domain reuses container', csid1 === csid2,
+    `before=${csid1}, after=${csid2}`);
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 
 async function main() {
@@ -414,6 +499,8 @@ async function main() {
 
   try {
     await testSetup();
+    await testEphemeralCrossDomainIsolation();
+    await testEphemeralSameDomainReuse();
     await testTabInterception();
     await testTimezoneSpoof();
     await testCanvasCrossContainer();

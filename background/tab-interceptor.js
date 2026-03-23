@@ -30,7 +30,8 @@ const TabInterceptor = (() => {
       return { cancel: true };
     }
     if (decision.action === 'NEW_EPHEMERAL') {
-      if (currentCookieStoreId !== 'firefox-default' && ContainerManager.isEphemeral(currentCookieStoreId) && ContainerManager.getContainerTabCount(currentCookieStoreId) <= 1) {
+      const sameDomain = tracked && tracked.url && !isDifferentDomain(tracked.url, url);
+      if (sameDomain && currentCookieStoreId !== 'firefox-default' && ContainerManager.isEphemeral(currentCookieStoreId) && ContainerManager.getContainerTabCount(currentCookieStoreId) <= 1) {
         if (tracked) tracked.url = url;
         return ContainerEnv.setCookieForUrl(url, currentCookieStoreId).then(function () { return {}; });
       }
