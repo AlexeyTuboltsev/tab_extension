@@ -12,7 +12,7 @@ describe('ContainerEnv.buildConfig', () => {
 
   test('returns only seed when no timezone is set', () => {
     const config = ContainerEnv.buildConfig('firefox-container-1');
-    expect(config).toEqual({ seed: expect.any(Number) });
+    expect(config).toEqual({ seed: expect.any(Number), prof: null });
   });
 
   test('returns full config after updateTimezone', () => {
