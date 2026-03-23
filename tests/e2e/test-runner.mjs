@@ -26,7 +26,7 @@ function loadAuthToken() {
   authToken = readFileSync(AUTH_TOKEN_PATH, 'utf8').trim();
 }
 
-function sendCommand(command, params = {}) {
+function sendCommandOnce(command, params = {}) {
   // Re-read token from disk each time — host may have restarted and rotated it
   try { authToken = readFileSync(AUTH_TOKEN_PATH, 'utf8').trim(); } catch (e) {}
   return new Promise((resolve, reject) => {
@@ -77,6 +77,35 @@ function sendCommand(command, params = {}) {
       if (!resolved) reject(new Error(`Timeout on command: ${command}`));
     });
   });
+}
+
+// Retry wrapper — handles brief gaps when host restarts (ENOENT/ECONNREFUSED)
+// and native messaging pipe death (returns error suggesting pipe is dead).
+async function sendCommand(command, params = {}) {
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY = 2000;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const result = await sendCommandOnce(command, params);
+      // If host says native messaging is dead, wait for reconnect and retry
+      if (!result.success && result.error?.includes('Native messaging')) {
+        if (attempt < MAX_RETRIES - 1) {
+          console.error(`# Host pipe dead, waiting for reconnect (attempt ${attempt + 1})...`);
+          await sleep(RETRY_DELAY);
+          continue;
+        }
+      }
+      return result;
+    } catch (e) {
+      // ENOENT/ECONNREFUSED = host restarting, retry after delay
+      if ((e.code === 'ENOENT' || e.code === 'ECONNREFUSED') && attempt < MAX_RETRIES - 1) {
+        console.error(`# Socket unavailable (${e.code}), retrying in ${RETRY_DELAY}ms...`);
+        await sleep(RETRY_DELAY);
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 /**
@@ -154,7 +183,7 @@ async function testTabInterception() {
 
   const tabs = await sendCommand('queryAllTabs');
   if (!tabs.success) {
-    report('Tab Interception', false, 'queryAllTabs failed');
+    report('Tab Interception', false, 'queryAllTabs failed: ' + JSON.stringify(tabs));
     return;
   }
 
@@ -350,14 +379,18 @@ async function testWebGLCrossContainer() {
 async function testAudioCrossContainer() {
   // Reuse tabs from canvas/WebGL tests — opening more windows late in the suite
   // often fails due to Firefox resource pressure in Docker.
-  if (firstTabId == null || secondTabId == null) {
+  // Fall back to creating fresh windows if the existing tabs are stale.
+  let audioTabId1 = firstTabId;
+  let audioTabId2 = secondTabId;
+
+  if (audioTabId1 == null || audioTabId2 == null) {
     report('Audio Noise: Cross-Container', false, 'Missing tab(s) from earlier tests');
     return;
   }
 
   // Verify tabs are still alive
-  const check1 = await sendCommand('evaluate', { tabId: firstTabId, expression: '1+1' });
-  const check2 = await sendCommand('evaluate', { tabId: secondTabId, expression: '1+1' });
+  const check1 = await sendCommand('evaluate', { tabId: audioTabId1, expression: '1+1' });
+  const check2 = await sendCommand('evaluate', { tabId: audioTabId2, expression: '1+1' });
   if (!check1.success || !check2.success) {
     report('Audio Noise: Cross-Container', false,
       `Tabs stale: tab1=${check1.success}, tab2=${check2.success}`);
@@ -396,14 +429,14 @@ async function testAudioCrossContainer() {
     })()
   `;
 
-  await pageEval(firstTabId, audioCode);
+  await pageEval(audioTabId1, audioCode);
   await sleep(1000);
-  const r1 = await sendCommand('evaluate', { tabId: firstTabId, expression: 'document.title' });
+  const r1 = await sendCommand('evaluate', { tabId: audioTabId1, expression: 'document.title' });
   const hash1 = r1.result?.result;
 
-  await pageEval(secondTabId, audioCode);
+  await pageEval(audioTabId2, audioCode);
   await sleep(1000);
-  const r2 = await sendCommand('evaluate', { tabId: secondTabId, expression: 'document.title' });
+  const r2 = await sendCommand('evaluate', { tabId: audioTabId2, expression: 'document.title' });
   const hash2 = r2.result?.result;
 
   // In headless Docker (no audio device), both containers produce silent data (hash=0).
