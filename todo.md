@@ -132,217 +132,31 @@ Test Approach A first — it's zero code changes and might just work. If PayPal'
 
 ---
 
-## Fingerprint noise per container
+## Fingerprint noise per container — DONE
 
-Add per-container canvas/WebGL/AudioContext fingerprint noise so each saved container appears as a different "user" to fingerprinting scripts.
+Implemented in `content/container-env.js` via `<script>` tag injection at `document_start`.
+Uses `defMethod`/`defGetter` with method shorthand for CreepJS lie-detection evasion.
 
-### Approach
-- Content script with `"run_at": "document_start"` — Firefox guarantees this runs before any page scripts
-- Patch `HTMLCanvasElement.prototype.toDataURL`, `.toBlob`, and `CanvasRenderingContext2D.prototype.getImageData` on the prototype
-- Use `exportFunction` (Firefox-specific) to expose the patched functions to page context
-- Generate deterministic noise seed from the tab's `cookieStoreId` so the same container always produces the same fingerprint
-- Also patch `WebGLRenderingContext.prototype.readPixels` and `AudioContext` for full coverage
+**Implemented:** canvas sub-pixel transform (0.001–0.01), audio compressor variation, full timezone patching (main thread + Workers + ServiceWorkers), Date.parse ISO date-only fix, Worker blob URL location faking, profile spoofing (navigator, screen, devicePixelRatio, languages, fonts).
 
-### Key details
-- Noise must be deterministic per-container (same container = same hash = consistent identity)
-- Noise must be small enough to produce plausible canvas output (modify a few pixels, not blank it)
-- Different containers = different noise = different fingerprint (matches cookie isolation)
-- `document_start` in Firefox runs before any DOM is constructed or scripts execute — safe against inline scripts
+**Removed (caused detection):** canvas/WebGL LSB XOR readback noise, WebGL vendor/renderer spoofing, oscillator frequency offset, getChannelData noise.
 
-### Files to add
-- `content/fingerprint-noise.js` — the content script
-- Update `manifest.json` to add `content_scripts` entry
+**CreepJS result:** 0 rejected, 0 lies, all sections OK.
 
-### Canvas/WebGL pixel output spoofing
+### Open: Audio bold-fail
+Compressor variation makes audio sum digits unstable across visits (~5% of fingerprint weight). Options: keep as-is (recommended — provides per-container differentiation), remove (eliminates cosmetic flag but loses audio isolation), or find deterministic variation method.
 
-Two-layer approach that produces natural-looking variation without trying to mimic a specific GPU:
+---
 
-**Layer 1: Sub-pixel transform injection (primary)**
+## Auto timezone/locale from IP (VPN-aware) — DONE
 
-Patch `getContext` once — inject a tiny sub-pixel translate into every 2D canvas context.
-This shifts ALL drawing operations, causing the GPU's own antialiasing to produce different edge pixels.
+Implemented in `background/ip-timezone.js`. Detects timezone/country from public IP, re-checks on tab creation and idle state changes. Timezone delivered to content scripts via `__ctm_env` cookie before tab creation.
 
-```javascript
-const origGetContext = HTMLCanvasElement.prototype.getContext;
-HTMLCanvasElement.prototype.getContext = function(type, attrs) {
-  const ctx = origGetContext.call(this, type, attrs);
-  if (type === '2d') {
-    // Tiny shift — different per container, affects all antialiased edges
-    ctx.translate(0.0000001 * seed, 0.0000001 * seed);
-  }
-  return ctx;
-};
-```
+---
 
-Why this works:
-- One patch covers ALL 2D drawing operations (~20 methods: fillRect, strokeRect, fillText, arc, lineTo, drawImage, etc.)
-- Can't be bypassed by caching a reference to drawing methods — the transform is on the context instance
-- Output looks natural — the GPU itself renders differently, not artificial noise
-- Deterministic per container (same seed = same shift = same fingerprint)
+## Regional hardware profile mimicry — DONE
 
-For WebGL: same idea — inject tiny offset into projection matrix via patching `gl.viewport` or `gl.uniformMatrix*` calls.
-
-**Layer 2: Readback noise (fallback)**
-
-Patch readback functions to add deterministic per-container noise as a safety net:
-- `CanvasRenderingContext2D.prototype.getImageData`
-- `HTMLCanvasElement.prototype.toDataURL`
-- `HTMLCanvasElement.prototype.toBlob`
-- `WebGLRenderingContext.prototype.readPixels`
-- `WebGL2RenderingContext.prototype.readPixels`
-
-```javascript
-// Flip least significant bits using container-derived seed
-for (let i = 0; i < data.length; i += 4) {
-  data[i]   ^= (hash(seed + i) & 1);   // R ±1
-  data[i+1] ^= (hash(seed + i+1) & 1); // G ±1
-}
-```
-
-**Why both layers:**
-- Layer 1 produces natural GPU-rendered variation for known canvas tests
-- Layer 2 catches edge cases (e.g., code that creates a context, draws, reads pixels all in ways that bypass the transform)
-- Together: natural-looking + comprehensive
-
-**AudioContext:**
-- Patch `AudioContext.prototype.createOscillator` or `createDynamicsCompressor`
-- Add tiny frequency/gain offset per container seed
-- Or patch `AnalyserNode.prototype.getFloatFrequencyData` / `getByteFrequencyData` to add noise to output
-
-### What we CANNOT do from an extension
-- Change actual GPU rendering pipeline (browser engine level)
-- Intercept WebGL shader execution on GPU
-- Modify OS font rasterizer
-- Perfectly mimic a specific GPU's pixel output (would need reference renders for infinite possible operations)
-
-### Honest limitation
-No anti-fingerprint tool mimics specific GPU pixel output. Tor Browser makes everyone identical (standardized rendering). Brave adds random noise. Our approach (sub-pixel shift + readback noise) is between the two — natural-looking variation that differs per container.
-
-### Signals to patch (summary)
-- [ ] Canvas: sub-pixel transform injection on `getContext('2d')`
-- [ ] Canvas: readback noise on `toDataURL`, `toBlob`, `getImageData`
-- [ ] WebGL: projection matrix offset on context creation
-- [ ] WebGL: readback noise on `readPixels`
-- [ ] WebGL: renderer/vendor strings via `getParameter`
-- [ ] AudioContext: frequency/gain noise on oscillator/compressor
-- [ ] Consider: `navigator.hardwareConcurrency`, screen dimensions (from profile bundle)
-
-### Open questions
-- Should ephemeral containers each get unique noise, or share a "generic" profile?
-- Should there be a UI toggle to enable/disable fingerprint noise?
-- How to handle `privacy.resistFingerprinting` interaction — if user has it enabled, don't double-patch?
-- Sub-pixel shift amount: how small is small enough to be invisible to the user but large enough to change antialiased pixels? Need to test.
-
-## Auto timezone/locale from IP (VPN-aware)
-
-Automatically detect timezone from public IP so that when using a VPN, the browser's reported timezone matches the VPN exit location. Prevents timezone-based fingerprint mismatch.
-
-### IP detection strategy
-- Lookup public IP via geolocation API (e.g., `https://ipapi.co/json/` — returns timezone, country, city)
-- Check once on extension startup
-- Re-check on `online` event (covers VPN connect/disconnect)
-- Re-check on `browser.idle.onStateChanged` when user returns from idle (VPN may have changed while away)
-- Cache result in `storage.local` — typically ~5-10 API calls per day
-- Share cached timezone with content scripts via messaging or storage
-
-### What to patch in content script (`document_start`)
-- [ ] `Date.prototype.getTimezoneOffset()` — return offset matching spoofed timezone
-- [ ] `Date.prototype.toString()`, `toLocaleString()`, `toTimeString()` — show spoofed timezone name
-- [ ] `Intl.DateTimeFormat().resolvedOptions().timeZone` — return spoofed timezone string
-- [ ] `Intl.DateTimeFormat.prototype.format()` — format dates in spoofed timezone
-- [ ] `navigator.language` / `navigator.languages` — match region to timezone for consistency
-
-### Per-container overrides
-- Each saved container can have a timezone override (auto from IP, or manual)
-- Ephemeral containers use the current auto-detected timezone
-- UI: dropdown in container settings form — "Auto (from IP)", or pick a timezone manually
-
-### Permissions needed
-- `idle` permission (for `browser.idle.onStateChanged`)
-- `<all_urls>` already covers the API fetch
-
-### Open questions
-- Which IP geolocation API? ipapi.co (1000/day free), ip-api.com (45/min free, http only), or self-hosted?
-- Should `navigator.language` change per-container? e.g., German VPN → `de-DE`? This could break UX for the user
-- How to handle IP lookup failure (no internet, API down) — fall back to real timezone?
-
-## Regional hardware profile mimicry
-
-Instead of randomizing or blanking fingerprint signals, mimic the most common real hardware configuration for the user's detected country/region. Combined with IP-based timezone, each container appears as a plausible local user.
-
-### How it works
-1. IP lookup gives us the country (already done for timezone)
-2. Country maps to a regional profile set (e.g., "Western Europe")
-3. Container ID deterministically selects a specific profile from the set
-4. Content script (`document_start`) patches all signals to match the chosen profile
-5. Same container = same profile always. Different container = different profile.
-
-### Profile structure
-```
-{
-  "id": "eu-west-01",
-  "region": "Western Europe",
-  "webgl_renderer": "ANGLE (Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0)",
-  "webgl_vendor": "Google Inc. (Intel)",
-  "platform": "Win32",
-  "hardwareConcurrency": 8,
-  "deviceMemory": 8,
-  "screen": [1920, 1080],
-  "colorDepth": 24,
-  "pixelRatio": 1,
-  "languages": ["de-DE", "en-US"],
-  "canvas_noise_seed": "derived from container ID + profile ID",
-  "fonts": "win11-de"
-}
-```
-
-### Regional profile sets to curate
-- [ ] Western Europe (DE/FR/NL/etc.) — 3-5 profiles
-- [ ] North America (US/CA) — 3-5 profiles
-- [ ] Eastern Europe (PL/CZ/RU/etc.) — 3-5 profiles
-- [ ] East Asia (JP/KR/TW) — 3-5 profiles
-- [ ] South America (BR/AR/etc.) — 2-3 profiles
-- Total: ~15-25 profiles
-
-### Data sources for building profiles
-- Steam Hardware Survey (GPU/CPU/OS/screen per region)
-- StatCounter (screen resolution, OS, browser per country)
-- AmIUnique.org research papers (fingerprint distributions)
-- CreepJS / CoverYourTracks datasets
-- Chrome UX Report (device categories per country)
-- Manual collection: run fingerprint test page through VPN exits in each region
-
-### Signals patched per profile
-- [ ] `navigator.platform`
-- [ ] `navigator.hardwareConcurrency`
-- [ ] `navigator.deviceMemory`
-- [ ] `navigator.languages` / `navigator.language`
-- [ ] `screen.width`, `screen.height`, `screen.colorDepth`
-- [ ] `window.devicePixelRatio`
-- [ ] WebGL renderer/vendor strings
-- [ ] Canvas noise (deterministic per profile + container)
-- [ ] WebGL readPixels noise
-- [ ] AudioContext noise
-- [ ] `Date` / `Intl` timezone (from IP, see above)
-
-### Consistency checks
-- GPU renderer must match platform (no Intel UHD on macOS ARM, no Apple M1 on Win32)
-- Screen resolution must be plausible for the device class
-- CPU cores must match the GPU tier (no 32 cores with Intel HD 4000)
-- Language should match region but not break user experience — maybe only spoof in ephemeral containers?
-
-### UI
-- Container settings form: "Fingerprint Profile" dropdown
-  - "Auto (match region)" — default, uses IP-detected region
-  - "Manual" — pick a specific profile
-  - "None" — no spoofing, real signals
-- Global toggle in options: enable/disable fingerprint mimicry
-
-### Open questions
-- Ship profiles as a static JSON file in the extension, or fetch from a maintained repo?
-- How often do profiles need updating? GPU market shifts slowly (~yearly is fine)
-- Should we also spoof `User-Agent` to match the profile? (e.g., Windows UA for a Win32 profile) — this is high risk, may break sites
-- How to handle WebGL render-based fingerprinting (not just strings but actual pixel output)? May need per-profile GPU rendering quirk simulation — very complex, maybe out of scope
+Implemented in `background/container-env.js` (`pickProfile`) and `data/profiles.json`. IP → country → profile pool → deterministic selection by container seed. Profiles include platform, screen, GPU strings, fonts, languages. Applied via `defGetter` overrides in content script.
 
 ## Font list mimicry per profile
 
@@ -429,6 +243,38 @@ Per profile, only need to answer true/false for the 66 probed fonts:
 - Real-world font stats per country don't exist publicly — need to approximate from OS+locale+common apps, or build our own dataset via opt-in
 - How to handle `@font-face` web fonts vs system fonts — only spoof system font detection
 - Firefox `privacy.resistFingerprinting` already restricts fonts — detect and don't double-patch
+
+---
+
+## Systematic fingerprint test coverage
+
+Parse CreepJS source (~20 modules, ~70 checks) and other fingerprinting libraries (FingerprintJS, AmIUnique, CoverYourTracks). Extract each detection/fingerprint check, convert to a runnable test, prioritize by cross-library overlap.
+
+### Priority tiers
+
+**Tier 1 — High overlap (appear in 2+ libs), ~30 checks, 1-2 days:**
+- Timezone (Date, Intl, Worker) — ~8 checks — DONE
+- Canvas (Picasso, text, emoji, pixel comparison) — ~6 checks — in progress
+- Navigator/Screen/DOMRect — ~10 checks — DONE (profile)
+- Audio (compressor, analyser, channel data) — ~5 checks
+- Fonts (measurement, document.fonts) — ~3 checks
+
+**Tier 2 — Medium overlap, ~15 checks:**
+- WebGL (params, images, pixels, renderer) — ~5 checks
+- Worker scope (location, prototype lies, tz) — ~5 checks — DONE
+- Headless detection — ~6 checks (N/A, not headless)
+
+**Tier 3 — CreepJS-specific, ~25 checks, skip unless needed:**
+- Prototype lie detection — ~15 checks — DONE (defMethod)
+- Resistance detection — ~4 checks
+- Speech synthesis — ~2 checks
+- SVGRect — ~2 checks
+
+### Approach
+1. Parse each CreepJS `src/` module, extract exact detection logic
+2. Write a test per check: run in a container tab, assert no lies/trash/detection
+3. Cross-reference with FingerprintJS OSS source for overlap scoring
+4. CI: run tests against extension in headed Firefox via Playwright
 
 ---
 

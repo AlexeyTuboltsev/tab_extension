@@ -46,8 +46,7 @@ describe('noise', () => {
     expect(n).toBe(Math.floor(n));
   });
 
-  test('LSB varies (used for pixel noise)', () => {
-    // Check that noise & 1 isn't always the same
+  test('LSB varies across indices', () => {
     const bits = new Set();
     for (let i = 0; i < 100; i++) {
       bits.add(noise(12345, i) & 1);
@@ -58,62 +57,90 @@ describe('noise', () => {
   test('seed 0 still produces output (but extension skips it)', () => {
     expect(typeof noise(0, 0)).toBe('number');
   });
+
+  test('16-bit range used for sub-pixel offset', () => {
+    // Canvas transform uses (noise(seed, n) & 0xFFFF) / 0xFFFF * 0.8 + 0.1
+    const seed = 12345;
+    for (let idx = 1; idx <= 3; idx++) {
+      const raw = (noise(seed, idx) & 0xFFFF) / 0xFFFF;
+      expect(raw).toBeGreaterThanOrEqual(0);
+      expect(raw).toBeLessThanOrEqual(1);
+    }
+  });
 });
 
-describe('pixel noise application', () => {
-  function applyPixelNoise(data, s) {
-    if (!s) return;
-    for (let i = 0; i < data.length; i += 4) {
-      data[i] = data[i] ^ (noise(s, i) & 1);
+describe('canvas sub-pixel offset computation', () => {
+  test('offset falls in 0.1–0.9 range', () => {
+    const seeds = [111, 222, 333, 12345, 99999];
+    for (const seed of seeds) {
+      var tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+      var ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+      expect(tx).toBeGreaterThanOrEqual(0.1);
+      expect(tx).toBeLessThanOrEqual(0.9);
+      expect(ty).toBeGreaterThanOrEqual(0.1);
+      expect(ty).toBeLessThanOrEqual(0.9);
     }
-  }
-
-  test('seed 0 does not modify data', () => {
-    const data = new Uint8ClampedArray([100, 200, 50, 255, 150, 100, 75, 255]);
-    const original = new Uint8ClampedArray(data);
-    applyPixelNoise(data, 0);
-    expect(data).toEqual(original);
   });
 
-  test('non-zero seed modifies R channel only', () => {
-    const data = new Uint8ClampedArray([100, 200, 50, 255, 150, 100, 75, 255]);
-    const original = new Uint8ClampedArray(data);
-    applyPixelNoise(data, 12345);
-
-    // G, B, A channels should be unchanged
-    expect(data[1]).toBe(original[1]); // G
-    expect(data[2]).toBe(original[2]); // B
-    expect(data[3]).toBe(original[3]); // A
-    expect(data[5]).toBe(original[5]); // G pixel 2
-    expect(data[6]).toBe(original[6]); // B pixel 2
-    expect(data[7]).toBe(original[7]); // A pixel 2
-  });
-
-  test('R channel changes by at most 1', () => {
-    const data = new Uint8ClampedArray([100, 200, 50, 255]);
-    applyPixelNoise(data, 12345);
-    expect(Math.abs(data[0] - 100)).toBeLessThanOrEqual(1);
-  });
-
-  test('is deterministic', () => {
-    const data1 = new Uint8ClampedArray([100, 200, 50, 255, 150, 100, 75, 255]);
-    const data2 = new Uint8ClampedArray([100, 200, 50, 255, 150, 100, 75, 255]);
-    applyPixelNoise(data1, 12345);
-    applyPixelNoise(data2, 12345);
-    expect(data1).toEqual(data2);
-  });
-
-  test('different seeds produce different results', () => {
-    const data1 = new Uint8ClampedArray(400); // 100 pixels
-    const data2 = new Uint8ClampedArray(400);
-    for (let i = 0; i < 400; i++) data1[i] = data2[i] = i % 256;
-    applyPixelNoise(data1, 111);
-    applyPixelNoise(data2, 222);
-
-    let diffs = 0;
-    for (let i = 0; i < 400; i += 4) {
-      if (data1[i] !== data2[i]) diffs++;
+  test('rotation angle is small', () => {
+    const seeds = [111, 222, 333, 12345, 99999];
+    for (const seed of seeds) {
+      var angle = ((noise(seed, 3) & 0xFFFF) / 0xFFFF) * 0.002;
+      expect(angle).toBeGreaterThanOrEqual(0);
+      expect(angle).toBeLessThanOrEqual(0.002);
     }
-    expect(diffs).toBeGreaterThan(0);
+  });
+
+  test('different seeds produce different offsets', () => {
+    const offsets = [111, 222, 333].map(seed => {
+      return ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+    });
+    const unique = new Set(offsets);
+    expect(unique.size).toBe(3);
+  });
+});
+
+describe('WebGL parameter variation', () => {
+  test('MAX_TEXTURE_SIZE reduction is 0-3', () => {
+    const seeds = [111, 222, 333, 12345, 99999];
+    for (const seed of seeds) {
+      const reduction = noise(seed, 10) & 3;
+      expect(reduction).toBeGreaterThanOrEqual(0);
+      expect(reduction).toBeLessThanOrEqual(3);
+    }
+  });
+
+  test('different seeds produce different reductions', () => {
+    const reductions = new Set();
+    for (let seed = 1; seed < 100; seed++) {
+      reductions.add(noise(seed, 10) & 3);
+    }
+    expect(reductions.size).toBeGreaterThan(1);
+  });
+});
+
+describe('audio compressor variation', () => {
+  test('threshold offset is tiny', () => {
+    const seeds = [111, 222, 12345, 99999];
+    for (const seed of seeds) {
+      const offset = ((noise(seed, 30) & 0xFF) - 128) * 0.0001;
+      expect(Math.abs(offset)).toBeLessThanOrEqual(0.0128);
+    }
+  });
+
+  test('knee offset is tiny', () => {
+    const seeds = [111, 222, 12345, 99999];
+    for (const seed of seeds) {
+      const offset = ((noise(seed, 31) & 0xFF) - 128) * 0.00005;
+      expect(Math.abs(offset)).toBeLessThanOrEqual(0.0064);
+    }
+  });
+
+  test('different seeds produce different compressor offsets', () => {
+    const offsets = [111, 222, 333].map(seed => {
+      return ((noise(seed, 30) & 0xFF) - 128) * 0.0001;
+    });
+    const unique = new Set(offsets);
+    expect(unique.size).toBeGreaterThan(1);
   });
 });
