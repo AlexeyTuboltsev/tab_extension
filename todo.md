@@ -246,6 +246,38 @@ Per profile, only need to answer true/false for the 66 probed fonts:
 
 ---
 
+## Systematic fingerprint test coverage
+
+Parse CreepJS source (~20 modules, ~70 checks) and other fingerprinting libraries (FingerprintJS, AmIUnique, CoverYourTracks). Extract each detection/fingerprint check, convert to a runnable test, prioritize by cross-library overlap.
+
+### Priority tiers
+
+**Tier 1 — High overlap (appear in 2+ libs), ~30 checks, 1-2 days:**
+- Timezone (Date, Intl, Worker) — ~8 checks — DONE
+- Canvas (Picasso, text, emoji, pixel comparison) — ~6 checks — in progress
+- Navigator/Screen/DOMRect — ~10 checks — DONE (profile)
+- Audio (compressor, analyser, channel data) — ~5 checks
+- Fonts (measurement, document.fonts) — ~3 checks
+
+**Tier 2 — Medium overlap, ~15 checks:**
+- WebGL (params, images, pixels, renderer) — ~5 checks
+- Worker scope (location, prototype lies, tz) — ~5 checks — DONE
+- Headless detection — ~6 checks (N/A, not headless)
+
+**Tier 3 — CreepJS-specific, ~25 checks, skip unless needed:**
+- Prototype lie detection — ~15 checks — DONE (defMethod)
+- Resistance detection — ~4 checks
+- Speech synthesis — ~2 checks
+- SVGRect — ~2 checks
+
+### Approach
+1. Parse each CreepJS `src/` module, extract exact detection logic
+2. Write a test per check: run in a container tab, assert no lies/trash/detection
+3. Cross-reference with FingerprintJS OSS source for overlap scoring
+4. CI: run tests against extension in headed Firefox via Playwright
+
+---
+
 ## Testing strategy
 
 Multi-layer approach to verify fingerprint spoofing works correctly and isn't detectable.

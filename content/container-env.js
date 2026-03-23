@@ -438,42 +438,79 @@
       return h;
     }
 
-    // --- Canvas 2D: sub-pixel transform + rotation injection ---
-    // Track which contexts have been transformed to avoid compounding on repeated getContext calls
-    var transformedCtxs = new WeakSet();
-    var origGetContext = HTMLCanvasElement.prototype.getContext;
+    // --- Canvas 2D: sub-pixel transform on text rendering only ---
+    // CreepJS detects global transforms via a pixel-exact comparison test:
+    // fill 1x1 rects → readback → compare. A global sub-pixel translate shifts
+    // integer-coordinate fills to fractional positions, causing anti-aliased readback
+    // differences → "rgba noise" detection.
+    //
+    // Instead, only apply transform around text-rendering calls (fillText/strokeText).
+    // Text rendering is the primary fingerprintable signal. save/restore ensures
+    // the transform doesn't leak into subsequent non-text operations.
+    var cTx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+    var cTy = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+    var cAngle = ((noise(seed, 3) & 0xFFFF) / 0xFFFF) * 0.002;
 
-    defMethod(HTMLCanvasElement.prototype, 'getContext', {
-      getContext(type, attrs) {
-        var ctx = origGetContext.call(this, type, attrs);
-        if (ctx && type === '2d' && !transformedCtxs.has(ctx)) {
-          transformedCtxs.add(ctx);
-          var tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
-          var ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
-          var angle = ((noise(seed, 3) & 0xFFFF) / 0xFFFF) * 0.0001;
-          ctx.translate(tx, ty);
-          ctx.rotate(angle);
+    var origFillText = CanvasRenderingContext2D.prototype.fillText;
+    defMethod(CanvasRenderingContext2D.prototype, 'fillText', {
+      fillText(text, x, y, maxWidth) {
+        this.save();
+        this.translate(cTx, cTy);
+        this.rotate(cAngle);
+        if (arguments.length > 3) {
+          origFillText.call(this, text, x, y, maxWidth);
+        } else {
+          origFillText.call(this, text, x, y);
         }
-        return ctx;
+        this.restore();
       }
-    }.getContext);
+    }.fillText);
 
-    if (typeof OffscreenCanvas !== 'undefined') {
-      var origOCGetContext = OffscreenCanvas.prototype.getContext;
-      defMethod(OffscreenCanvas.prototype, 'getContext', {
-        getContext(type, attrs) {
-          var ctx = origOCGetContext.call(this, type, attrs);
-          if (ctx && type === '2d' && !transformedCtxs.has(ctx)) {
-            transformedCtxs.add(ctx);
-            var tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
-            var ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
-            var angle = ((noise(seed, 3) & 0xFFFF) / 0xFFFF) * 0.0001;
-            ctx.translate(tx, ty);
-            ctx.rotate(angle);
-          }
-          return ctx;
+    var origStrokeText = CanvasRenderingContext2D.prototype.strokeText;
+    defMethod(CanvasRenderingContext2D.prototype, 'strokeText', {
+      strokeText(text, x, y, maxWidth) {
+        this.save();
+        this.translate(cTx, cTy);
+        this.rotate(cAngle);
+        if (arguments.length > 3) {
+          origStrokeText.call(this, text, x, y, maxWidth);
+        } else {
+          origStrokeText.call(this, text, x, y);
         }
-      }.getContext);
+        this.restore();
+      }
+    }.strokeText);
+
+    if (typeof OffscreenCanvas !== 'undefined' && typeof OffscreenCanvasRenderingContext2D !== 'undefined') {
+      var origOCFillText = OffscreenCanvasRenderingContext2D.prototype.fillText;
+      defMethod(OffscreenCanvasRenderingContext2D.prototype, 'fillText', {
+        fillText(text, x, y, maxWidth) {
+          this.save();
+          this.translate(cTx, cTy);
+          this.rotate(cAngle);
+          if (arguments.length > 3) {
+            origOCFillText.call(this, text, x, y, maxWidth);
+          } else {
+            origOCFillText.call(this, text, x, y);
+          }
+          this.restore();
+        }
+      }.fillText);
+
+      var origOCStrokeText = OffscreenCanvasRenderingContext2D.prototype.strokeText;
+      defMethod(OffscreenCanvasRenderingContext2D.prototype, 'strokeText', {
+        strokeText(text, x, y, maxWidth) {
+          this.save();
+          this.translate(cTx, cTy);
+          this.rotate(cAngle);
+          if (arguments.length > 3) {
+            origOCStrokeText.call(this, text, x, y, maxWidth);
+          } else {
+            origOCStrokeText.call(this, text, x, y);
+          }
+          this.restore();
+        }
+      }.strokeText);
     }
 
     // --- Audio: DynamicsCompressor parameter variation ---

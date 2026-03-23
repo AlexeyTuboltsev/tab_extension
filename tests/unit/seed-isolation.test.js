@@ -30,8 +30,8 @@ describe('Container seed isolation', () => {
     const seeds = containers.map(c => hashString(c));
 
     const transforms = seeds.map(seed => {
-      var tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
-      var ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
+      var tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+      var ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
       return tx.toFixed(8) + ',' + ty.toFixed(8);
     });
 
@@ -41,29 +41,29 @@ describe('Container seed isolation', () => {
 
   test('same seed always produces same canvas transform', () => {
     const seed = hashString('firefox-container-42');
-    var tx1 = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
-    var tx2 = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
+    var tx1 = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+    var tx2 = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
     expect(tx1).toBe(tx2);
   });
 
   test('sub-pixel offset differs per container', () => {
     const offsets = containers.map(c => {
       const seed = hashString(c);
-      return ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
+      return ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
     });
     const uniqueOffsets = new Set(offsets);
     expect(uniqueOffsets.size).toBe(containers.length);
   });
 
-  test('sub-pixel offset is in 0.001–0.01 range', () => {
+  test('sub-pixel offset is in 0.1–0.9 range', () => {
     for (const c of containers) {
       const seed = hashString(c);
-      const tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
-      const ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
-      expect(tx).toBeGreaterThanOrEqual(0.001);
-      expect(tx).toBeLessThanOrEqual(0.01);
-      expect(ty).toBeGreaterThanOrEqual(0.001);
-      expect(ty).toBeLessThanOrEqual(0.01);
+      const tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+      const ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+      expect(tx).toBeGreaterThanOrEqual(0.1);
+      expect(tx).toBeLessThanOrEqual(0.9);
+      expect(ty).toBeGreaterThanOrEqual(0.1);
+      expect(ty).toBeLessThanOrEqual(0.9);
     }
   });
 

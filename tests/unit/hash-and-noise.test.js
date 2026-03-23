@@ -59,7 +59,7 @@ describe('noise', () => {
   });
 
   test('16-bit range used for sub-pixel offset', () => {
-    // Canvas transform uses (noise(seed, n) & 0xFFFF) / 0xFFFF * 0.009 + 0.001
+    // Canvas transform uses (noise(seed, n) & 0xFFFF) / 0xFFFF * 0.8 + 0.1
     const seed = 12345;
     for (let idx = 1; idx <= 3; idx++) {
       const raw = (noise(seed, idx) & 0xFFFF) / 0xFFFF;
@@ -70,30 +70,30 @@ describe('noise', () => {
 });
 
 describe('canvas sub-pixel offset computation', () => {
-  test('offset falls in 0.001–0.01 range', () => {
+  test('offset falls in 0.1–0.9 range', () => {
     const seeds = [111, 222, 333, 12345, 99999];
     for (const seed of seeds) {
-      var tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
-      var ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
-      expect(tx).toBeGreaterThanOrEqual(0.001);
-      expect(tx).toBeLessThanOrEqual(0.01);
-      expect(ty).toBeGreaterThanOrEqual(0.001);
-      expect(ty).toBeLessThanOrEqual(0.01);
+      var tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+      var ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
+      expect(tx).toBeGreaterThanOrEqual(0.1);
+      expect(tx).toBeLessThanOrEqual(0.9);
+      expect(ty).toBeGreaterThanOrEqual(0.1);
+      expect(ty).toBeLessThanOrEqual(0.9);
     }
   });
 
-  test('rotation angle is tiny', () => {
+  test('rotation angle is small', () => {
     const seeds = [111, 222, 333, 12345, 99999];
     for (const seed of seeds) {
-      var angle = ((noise(seed, 3) & 0xFFFF) / 0xFFFF) * 0.0001;
+      var angle = ((noise(seed, 3) & 0xFFFF) / 0xFFFF) * 0.002;
       expect(angle).toBeGreaterThanOrEqual(0);
-      expect(angle).toBeLessThanOrEqual(0.0001);
+      expect(angle).toBeLessThanOrEqual(0.002);
     }
   });
 
   test('different seeds produce different offsets', () => {
     const offsets = [111, 222, 333].map(seed => {
-      return ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
+      return ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.8 + 0.1;
     });
     const unique = new Set(offsets);
     expect(unique.size).toBe(3);
