@@ -6,8 +6,8 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
       - run: npm install
@@ -17,7 +17,7 @@ jobs:
     name: E2E Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Clone Claudezilla
         run: git clone --depth 1 https://x-access-token:${{ secrets.CLAUDEZILLA_TOKEN }}@github.com/AlexeyTuboltsev/claudezilla.git /tmp/claudezilla

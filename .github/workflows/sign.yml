@@ -21,9 +21,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
 
@@ -62,7 +62,7 @@ jobs:
             --artifacts-dir ./artifacts \
             --ignore-files tests/ .github/ .claude/ node_modules/ package.json package-lock.json \
                            .gitignore .mcp.json .node-version .playwright-mcp/ \
-                           fingerprint-check.html CLAUDE.md README.md \
+                           fingerprint-check.html CLAUDE.md README.md build.sh todo.md \
             --overwrite-dest
 
       - name: Sign with Mozilla
@@ -75,7 +75,7 @@ jobs:
             --channel unlisted \
             --ignore-files tests/ .github/ .claude/ node_modules/ package.json package-lock.json \
                            .gitignore .mcp.json .node-version .playwright-mcp/ \
-                           fingerprint-check.html CLAUDE.md README.md
+                           fingerprint-check.html CLAUDE.md README.md build.sh todo.md
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
