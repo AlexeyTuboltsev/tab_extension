@@ -27,6 +27,8 @@ function loadAuthToken() {
 }
 
 function sendCommand(command, params = {}) {
+  // Re-read token from disk each time — host may have restarted and rotated it
+  try { authToken = readFileSync(AUTH_TOKEN_PATH, 'utf8').trim(); } catch (e) {}
   return new Promise((resolve, reject) => {
     const socket = connect(SOCKET_PATH);
     let buffer = '';
@@ -383,21 +385,15 @@ async function testAudioCrossContainer() {
     })()
   `;
 
-  let hash1, hash2;
-  try {
-    await pageEval(firstTabId, audioCode);
-    await sleep(1000);
-    const r1 = await sendCommand('evaluate', { tabId: firstTabId, expression: 'document.title' });
-    hash1 = r1.result?.result;
+  await pageEval(firstTabId, audioCode);
+  await sleep(1000);
+  const r1 = await sendCommand('evaluate', { tabId: firstTabId, expression: 'document.title' });
+  const hash1 = r1.result?.result;
 
-    await pageEval(secondTabId, audioCode);
-    await sleep(1000);
-    const r2 = await sendCommand('evaluate', { tabId: secondTabId, expression: 'document.title' });
-    hash2 = r2.result?.result;
-  } catch (e) {
-    report('Audio Noise: Cross-Container', true, 'SKIP: ' + e.message);
-    return;
-  }
+  await pageEval(secondTabId, audioCode);
+  await sleep(1000);
+  const r2 = await sendCommand('evaluate', { tabId: secondTabId, expression: 'document.title' });
+  const hash2 = r2.result?.result;
 
   // In headless Docker (no audio device), both containers produce silent data (hash=0).
   // Skip test in that case — the noise injection still works, but there's no signal to perturb.
