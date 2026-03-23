@@ -537,10 +537,10 @@ async function testCombinedHashDifferentContainers() {
   await sleep(8000);
 
   // Read combined hash from both tabs (use evaluate directly — no script injection needed for DOM reads)
-  const r1 = await sendCommand('evaluate', { tabId: tabId1, expression: 'document.getElementById("combinedHash").textContent' });
-  const r2 = await sendCommand('evaluate', { tabId: tabId2, expression: 'document.getElementById("combinedHash").textContent' });
-  const hash1 = r1.result?.result;
-  const hash2 = r2.result?.result;
+  const eval1 = await sendCommand('evaluate', { tabId: tabId1, expression: 'document.getElementById("combinedHash").textContent' });
+  const eval2 = await sendCommand('evaluate', { tabId: tabId2, expression: 'document.getElementById("combinedHash").textContent' });
+  const hash1 = eval1.result?.result;
+  const hash2 = eval2.result?.result;
 
   const valid = hash1 && hash2 && hash1 !== 'Computing...' && hash2 !== 'Computing...';
   const differ = hash1 !== hash2;
