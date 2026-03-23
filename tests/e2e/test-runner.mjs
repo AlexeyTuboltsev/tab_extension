@@ -348,10 +348,45 @@ async function testWebGLCrossContainer() {
 }
 
 async function testAudioCrossContainer() {
-  if (firstTabId == null || secondTabId == null) {
-    report('Audio Noise: Cross-Container', false, 'Missing tab(s)');
+  // Create fresh tabs — shared firstTabId/secondTabId may be stale by this point
+  const FP_URL = 'http://127.0.0.1:8765/fingerprint-check.html';
+
+  const c1 = await sendCommand('createWindow', { url: FP_URL + '?audio=1' });
+  if (!c1.success) {
+    report('Audio Noise: Cross-Container', false, 'createWindow #1 failed');
     return;
   }
+
+  let tab1;
+  try {
+    tab1 = await waitForTab(t =>
+      (t.url || '').includes('audio=1') && t.cookieStoreId !== 'firefox-default'
+    );
+  } catch (e) {
+    report('Audio Noise: Cross-Container', false, 'Tab #1 never appeared in container');
+    return;
+  }
+  const audioTabId1 = tab1.id ?? tab1.tabId;
+
+  const c2 = await sendCommand('createWindow', { url: FP_URL + '?audio=2' });
+  if (!c2.success) {
+    report('Audio Noise: Cross-Container', false, 'createWindow #2 failed');
+    return;
+  }
+
+  let tab2;
+  try {
+    tab2 = await waitForTab(t => {
+      const id = t.id ?? t.tabId;
+      return (t.url || '').includes('audio=2') && t.cookieStoreId !== 'firefox-default' && id !== audioTabId1;
+    });
+  } catch (e) {
+    report('Audio Noise: Cross-Container', false, 'Tab #2 never appeared in container');
+    return;
+  }
+  const audioTabId2 = tab2.id ?? tab2.tabId;
+
+  await sleep(2000);
 
   // Use AnalyserNode.getFloatFrequencyData which is patched by exportFunction
   // to add seed-based noise. Compare frequency data hashes across containers.
@@ -385,14 +420,14 @@ async function testAudioCrossContainer() {
     })()
   `;
 
-  await pageEval(firstTabId, audioCode);
+  await pageEval(audioTabId1, audioCode);
   await sleep(1000);
-  const r1 = await sendCommand('evaluate', { tabId: firstTabId, expression: 'document.title' });
+  const r1 = await sendCommand('evaluate', { tabId: audioTabId1, expression: 'document.title' });
   const hash1 = r1.result?.result;
 
-  await pageEval(secondTabId, audioCode);
+  await pageEval(audioTabId2, audioCode);
   await sleep(1000);
-  const r2 = await sendCommand('evaluate', { tabId: secondTabId, expression: 'document.title' });
+  const r2 = await sendCommand('evaluate', { tabId: audioTabId2, expression: 'document.title' });
   const hash2 = r2.result?.result;
 
   // In headless Docker (no audio device), both containers produce silent data (hash=0).
@@ -669,12 +704,6 @@ async function main() {
       await test();
     } catch (e) {
       const name = test.name.replace(/^test/, '');
-      // Socket gone = host crashed, skip remaining tests
-      if (e.code === 'ENOENT' || e.message?.includes('ENOENT')) {
-        console.error(`# Claudezilla host crashed during ${name}: ${e.message}`);
-        console.error('# Skipping remaining tests');
-        break;
-      }
       report(name, false, e.message);
     }
   }
