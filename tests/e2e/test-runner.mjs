@@ -188,7 +188,6 @@ async function testTabInterception() {
   }
 
   const allTabs = tabs.result?.tabs || tabs.result || [];
-  // Match on URL or title (URL may still be about:blank during interception)
   const isFingerprintTab = t => {
     const url = t.url || '';
     const title = t.title || '';
@@ -200,14 +199,9 @@ async function testTabInterception() {
 
   if (containerTab) {
     firstTabId = containerTab.id ?? containerTab.tabId;
-    // No re-navigate: the initial load through the interceptor already set the
-    // __ctm_env cookie, so the content script has the overrides in place.
-    // Re-navigating would lose the cookie (interceptor doesn't re-set it for
-    // tabs already in the correct container).
     await sleep(2000);
     report('Tab Interception', true, `tabId=${firstTabId}, cookieStoreId=${containerTab.cookieStoreId}`);
   } else {
-    // Fallback: find any fingerprint tab
     const anyTab = allTabs.find(t => isFingerprintTab(t));
     if (anyTab) {
       firstTabId = anyTab.id ?? anyTab.tabId;
@@ -227,7 +221,6 @@ async function testTimezoneSpoof() {
     return;
   }
 
-  // Wait for page to fully load
   await sleep(2000);
 
   const title = await pageEval(firstTabId, `
@@ -659,24 +652,6 @@ async function testCrossDomainNewContainer() {
     `before=${csid1}, after=${csid2}`);
 }
 
-async function cleanupExtraWindows() {
-  const tabs = await sendCommand('queryAllTabs');
-  if (!tabs.success) return;
-  const allTabs = tabs.result?.tabs || tabs.result || [];
-  let closed = 0;
-  for (const t of allTabs) {
-    const url = t.url || '';
-    const tabId = t.id ?? t.tabId;
-    if (!url.startsWith('about:')) {
-      try {
-        await sendCommand('closeTab', { tabId });
-        closed++;
-      } catch (e) { /* ignore */ }
-    }
-  }
-  report('Cleanup: close extra windows', true, `closed ${closed} tabs`);
-}
-
 // ── Main ─────────────────────────────────────────────────────────
 
 async function main() {
@@ -686,17 +661,16 @@ async function main() {
 
   const tests = [
     testSetup,
-    testCreepJSDifferentContainers,
-    testCrossDomainNewContainer,
-    testEphemeralCrossDomainIsolation,
-    testEphemeralSameDomainReuse,
-    cleanupExtraWindows,
     testTabInterception,
     testTimezoneSpoof,
     testCanvasCrossContainer,
     testCanvasDeterministic,
     testWebGLCrossContainer,
     testAudioCrossContainer,
+    testCreepJSDifferentContainers,
+    testCrossDomainNewContainer,
+    testEphemeralCrossDomainIsolation,
+    testEphemeralSameDomainReuse,
   ];
 
   for (const test of tests) {
