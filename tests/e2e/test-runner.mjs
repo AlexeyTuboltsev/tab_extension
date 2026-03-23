@@ -497,26 +497,27 @@ async function testEphemeralSameDomainReuse() {
 }
 
 /**
- * Poll a tab until CreepJS finishes computing and the FP ID hash appears in the DOM.
- * CreepJS renders results into #fingerprint-data .ellipsis-all elements.
- * The first one contains "FP ID: <hash>".
- * Returns the hash string, or null on timeout.
+ * Poll a tab until CreepJS finishes computing.
+ * Returns an array of all hash lines from #fingerprint-data .ellipsis-all,
+ * e.g. ["FP ID: abc123...", "Fuzzy: def456...", ...]
+ * Returns null on timeout.
  */
-async function waitForCreepJSHash(tabId, timeoutMs = 90000) {
+async function waitForCreepJSHashes(tabId, timeoutMs = 90000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const r = await sendCommand('evaluate', {
       tabId,
       expression: `(() => {
-        const el = document.querySelector('#fingerprint-data .ellipsis-all');
-        if (!el) return null;
-        const text = el.textContent || '';
-        const match = text.match(/FP ID:\\s*([a-f0-9]{32,})/);
-        return match ? match[1] : null;
+        const els = document.querySelectorAll('#fingerprint-data .ellipsis-all');
+        if (!els.length) return null;
+        const texts = Array.from(els).map(e => e.textContent.trim()).filter(t => t.length > 0);
+        if (!texts.length) return null;
+        const hasFP = texts.some(t => /FP ID:\\s*[a-f0-9]{32,}/.test(t));
+        return hasFP ? texts : null;
       })()`
     });
     const val = r.result?.result;
-    if (val && val !== 'null') return val;
+    if (val && val !== 'null' && Array.isArray(val)) return val;
     await sleep(5000);
   }
   return null;
@@ -570,19 +571,36 @@ async function testCreepJSDifferentContainers() {
   }
 
   // Wait for CreepJS to compute fingerprints (takes 15-30s)
-  console.log('# Waiting for CreepJS to compute hashes (up to 60s each)...');
-  const hash1 = await waitForCreepJSHash(tabId1);
-  const hash2 = await waitForCreepJSHash(tabId2);
+  console.log('# Waiting for CreepJS to compute hashes (up to 90s each)...');
+  const hashes1 = await waitForCreepJSHashes(tabId1);
+  const hashes2 = await waitForCreepJSHashes(tabId2);
 
-  if (!hash1 || !hash2) {
-    report('CreepJS: different hash per container', false,
-      `Timeout waiting for CreepJS. hash1=${hash1}, hash2=${hash2}`);
+  // Log all hashes from both tabs for debugging
+  console.log(`# Container 1 (${tab1.cookieStoreId}):`);
+  if (hashes1) hashes1.forEach(h => console.log(`#   ${h}`));
+  else console.log('#   (timeout - no hashes)');
+  console.log(`# Container 2 (${tab2.cookieStoreId}):`);
+  if (hashes2) hashes2.forEach(h => console.log(`#   ${h}`));
+  else console.log('#   (timeout - no hashes)');
+
+  if (!hashes1 || !hashes2) {
+    report('CreepJS: different hash per container', false, 'Timeout waiting for CreepJS');
     return;
   }
 
-  const differ = hash1 !== hash2;
+  // Extract FP ID from each
+  const fpId1 = hashes1.find(h => h.startsWith('FP ID:'));
+  const fpId2 = hashes2.find(h => h.startsWith('FP ID:'));
+
+  if (!fpId1 || !fpId2) {
+    report('CreepJS: different hash per container', false,
+      `Could not find FP ID. tab1=${JSON.stringify(hashes1)}, tab2=${JSON.stringify(hashes2)}`);
+    return;
+  }
+
+  const differ = fpId1 !== fpId2;
   report('CreepJS: different hash per container', differ,
-    `hash1=${hash1}, hash2=${hash2}, containers=${tab1.cookieStoreId}/${tab2.cookieStoreId}`);
+    `${fpId1} vs ${fpId2}`);
 }
 
 async function testCrossDomainNewContainer() {
