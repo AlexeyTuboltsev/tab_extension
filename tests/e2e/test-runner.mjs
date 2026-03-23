@@ -498,14 +498,15 @@ async function testEphemeralSameDomainReuse() {
   const csid1 = tab1.cookieStoreId;
   const tabId1 = tab1.id ?? tab1.tabId;
 
+  // Navigate the same tab to a different PATH on the SAME domain.
+  // Extension should reuse the ephemeral container (no domain change).
   await sendCommand('navigate', { tabId: tabId1, url: 'http://127.0.0.1:8765/fingerprint-check.html?samedom=2' });
-  await sleep(3000);
 
-  const tabs = await sendCommand('queryAllTabs');
-  const allTabs = tabs.result?.tabs || tabs.result || [];
-  const tab2 = allTabs.find(t => (t.url || '').includes('samedom=2'));
-
-  if (!tab2) {
+  // Poll for the navigated tab (extension may be slow under load)
+  let tab2;
+  try {
+    tab2 = await waitForTab(t => (t.url || '').includes('samedom=2'));
+  } catch (e) {
     report('Ephemeral: same-domain reuses container', false, 'Navigated tab not found');
     return;
   }
