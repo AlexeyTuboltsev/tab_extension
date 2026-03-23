@@ -490,6 +490,107 @@ async function testEphemeralSameDomainReuse() {
     `before=${csid1}, after=${csid2}`);
 }
 
+async function testCombinedHashDifferentContainers() {
+  // Open fingerprint page in first container
+  const r1 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?hash=1' });
+  if (!r1.success) {
+    report('Combined Hash: different containers', false, 'createWindow #1 failed');
+    return;
+  }
+
+  let tab1;
+  try {
+    tab1 = await waitForTab(t =>
+      (t.url || '').includes('hash=1') && t.cookieStoreId !== 'firefox-default'
+    );
+  } catch (e) {
+    report('Combined Hash: different containers', false, 'Tab #1 never appeared in container');
+    return;
+  }
+  const tabId1 = tab1.id ?? tab1.tabId;
+
+  // Open fingerprint page in second container
+  const r2 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?hash=2' });
+  if (!r2.success) {
+    report('Combined Hash: different containers', false, 'createWindow #2 failed');
+    return;
+  }
+
+  let tab2;
+  try {
+    tab2 = await waitForTab(t =>
+      (t.url || '').includes('hash=2') && t.cookieStoreId !== 'firefox-default'
+    );
+  } catch (e) {
+    report('Combined Hash: different containers', false, 'Tab #2 never appeared in container');
+    return;
+  }
+  const tabId2 = tab2.id ?? tab2.tabId;
+
+  if (tab1.cookieStoreId === tab2.cookieStoreId) {
+    report('Combined Hash: different containers', false,
+      `Both tabs in same container: ${tab1.cookieStoreId}`);
+    return;
+  }
+
+  // Wait for audio fingerprint (async) to complete — page updates combinedHash
+  await sleep(5000);
+
+  // Read combined hash from both tabs
+  const hash1 = await pageEval(tabId1, `document.title = document.getElementById('combinedHash').textContent;`);
+  const hash2 = await pageEval(tabId2, `document.title = document.getElementById('combinedHash').textContent;`);
+
+  const valid = hash1 && hash2 && hash1 !== 'Computing...' && hash2 !== 'Computing...';
+  const differ = hash1 !== hash2;
+
+  report('Combined Hash: different containers', valid && differ,
+    `hash1=${hash1}, hash2=${hash2}, containers=${tab1.cookieStoreId}/${tab2.cookieStoreId}`);
+}
+
+async function testCrossDomainNewContainer() {
+  // Open a page, then navigate to a different domain — must get a new container
+  const r1 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?xdom=1' });
+  if (!r1.success) {
+    report('Cross-domain: new container on URL change', false, 'createWindow failed');
+    return;
+  }
+
+  let tab1;
+  try {
+    tab1 = await waitForTab(t =>
+      (t.url || '').includes('xdom=1') && t.cookieStoreId !== 'firefox-default'
+    );
+  } catch (e) {
+    report('Cross-domain: new container on URL change', false, 'Tab never appeared in container');
+    return;
+  }
+
+  const csid1 = tab1.cookieStoreId;
+  const tabId1 = tab1.id ?? tab1.tabId;
+
+  // Navigate to a different domain
+  try {
+    await sendCommand('navigate', { tabId: tabId1, url: 'http://example.com/' });
+  } catch (e) {
+    // navigate may throw if extension removes the tab — that's fine
+  }
+
+  // Wait for extension to intercept and create new container
+  let tab2;
+  try {
+    tab2 = await waitForTab(t =>
+      (t.url || '').includes('example.com') && t.cookieStoreId !== 'firefox-default'
+    );
+  } catch (e) {
+    report('Cross-domain: new container on URL change', false, 'New container tab never appeared');
+    return;
+  }
+
+  const csid2 = tab2.cookieStoreId;
+  report('Cross-domain: new container on URL change', csid1 !== csid2,
+    `before=${csid1}, after=${csid2}`);
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 
 async function main() {
@@ -499,6 +600,8 @@ async function main() {
 
   try {
     await testSetup();
+    await testCombinedHashDifferentContainers();
+    await testCrossDomainNewContainer();
     await testEphemeralCrossDomainIsolation();
     await testEphemeralSameDomainReuse();
     await testTabInterception();
