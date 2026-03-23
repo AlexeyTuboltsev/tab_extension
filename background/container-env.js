@@ -1,6 +1,6 @@
 // Per-container environment configuration via cookie-based delivery
-// Sets a short-lived cookie with timezone + fingerprint seed before tab creation,
-// so the content script can read it synchronously at document_start.
+// Sets a short-lived XOR-obfuscated cookie with timezone + fingerprint seed
+// before tab creation, so the content script can read it synchronously at document_start.
 
 const ContainerEnv = (() => {
   'use strict';
@@ -8,6 +8,23 @@ const ContainerEnv = (() => {
   let currentTimezone = null;
   let currentCountry = null;
   let profilesList = null;
+
+  // XOR cipher key derived from extension's internal UUID (not accessible to page scripts)
+  let cipherKey = null;
+
+  function deriveCipherKey() {
+    const extUrl = browser.runtime.getURL('');
+    const keyNum = String(hashString(extUrl));
+    cipherKey = keyNum.repeat(Math.ceil(32 / keyNum.length)).slice(0, 32);
+  }
+
+  function xorCipher(str) {
+    const out = [];
+    for (let i = 0; i < str.length; i++) {
+      out.push(String.fromCharCode(str.charCodeAt(i) ^ cipherKey.charCodeAt(i % cipherKey.length)));
+    }
+    return out.join('');
+  }
 
   function hashString(str) {
     let hash = 5381;
@@ -77,10 +94,13 @@ const ContainerEnv = (() => {
     const parsedUrl = new URL(url);
     const cookieUrl = parsedUrl.origin;
 
+    if (!cipherKey) deriveCipherKey();
+    const encoded = btoa(xorCipher(JSON.stringify(config)));
+
     await browser.cookies.set({
       url: cookieUrl,
       name: '__ctm_env',
-      value: encodeURIComponent(JSON.stringify(config)),
+      value: encoded,
       storeId: cookieStoreId,
       path: '/',
       expirationDate: Math.floor(Date.now() / 1000) + 30
