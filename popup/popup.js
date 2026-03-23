@@ -335,6 +335,9 @@ async function init() {
     ['paypal.*','stripe.com','klarna.com','adyen.com','accounts.google.com','appleid.apple.com','login.microsoftonline.com'];
 
   showFormForCurrentTab();
+
+  const manifest = browser.runtime.getManifest();
+  document.getElementById('version').textContent = 'v' + manifest.version;
 }
 
 init();
