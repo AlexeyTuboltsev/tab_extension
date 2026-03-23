@@ -14,8 +14,10 @@
       if (trimmed.startsWith('__ctm_env=')) {
         const raw = trimmed.slice('__ctm_env='.length);
         config = JSON.parse(decodeURIComponent(raw));
-        // Delete cookie immediately — before page scripts can read it
-        document.cookie = '__ctm_env=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+        // Delay cookie deletion so iframes can also read it
+        setTimeout(function () {
+          document.cookie = '__ctm_env=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+        }, 3000);
         break;
       }
     }

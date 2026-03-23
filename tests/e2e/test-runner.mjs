@@ -533,12 +533,14 @@ async function testCombinedHashDifferentContainers() {
     return;
   }
 
-  // Wait for audio fingerprint (async) to complete — page updates combinedHash
-  await sleep(5000);
+  // Wait for page to fully render including async audio fingerprint
+  await sleep(8000);
 
-  // Read combined hash from both tabs
-  const hash1 = await pageEval(tabId1, `document.title = document.getElementById('combinedHash').textContent;`);
-  const hash2 = await pageEval(tabId2, `document.title = document.getElementById('combinedHash').textContent;`);
+  // Read combined hash from both tabs (use evaluate directly — no script injection needed for DOM reads)
+  const r1 = await sendCommand('evaluate', { tabId: tabId1, expression: 'document.getElementById("combinedHash").textContent' });
+  const r2 = await sendCommand('evaluate', { tabId: tabId2, expression: 'document.getElementById("combinedHash").textContent' });
+  const hash1 = r1.result?.result;
+  const hash2 = r2.result?.result;
 
   const valid = hash1 && hash2 && hash1 !== 'Computing...' && hash2 !== 'Computing...';
   const differ = hash1 !== hash2;
