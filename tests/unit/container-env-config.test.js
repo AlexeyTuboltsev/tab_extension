@@ -50,6 +50,50 @@ describe('ContainerEnv.buildConfig', () => {
   });
 });
 
+describe('Cookie value roundtrip (background encodes, content decodes)', () => {
+  // Simulates exactly what background/container-env.js writes and content/container-env.js reads
+  test('encodeURIComponent(JSON.stringify(config)) roundtrips through decodeURIComponent + JSON.parse', () => {
+    ContainerEnv.updateTimezone('America/New_York');
+    const config = ContainerEnv.buildConfig('firefox-container-1');
+    // Background encodes like this:
+    const cookieValue = encodeURIComponent(JSON.stringify(config));
+    // Content decodes like this:
+    const decoded = JSON.parse(decodeURIComponent(cookieValue));
+    expect(decoded.seed).toBe(config.seed);
+    expect(decoded.tz).toBe(config.tz);
+    expect(decoded.off).toBe(config.off);
+    expect(decoded.gmt).toBe(config.gmt);
+  });
+
+  test('config with profile data roundtrips correctly', () => {
+    ContainerEnv.setProfiles([{
+      countries: ['US'], platform: 'Win32', hardwareConcurrency: 8,
+      deviceMemory: 8, screen: { width: 1920, height: 1080 }, colorDepth: 24,
+      pixelRatio: 1, webgl_vendor: 'Google Inc.', webgl_renderer: 'ANGLE',
+      languages: ['en-US', 'en'], fonts: { 'Arial': true, 'Helvetica': false }
+    }]);
+    ContainerEnv.setCountry('US');
+    const config = ContainerEnv.buildConfig('firefox-container-5');
+    const cookieValue = encodeURIComponent(JSON.stringify(config));
+    const decoded = JSON.parse(decodeURIComponent(cookieValue));
+    expect(decoded.prof).toBeTruthy();
+    expect(decoded.prof.platform).toBe('Win32');
+    expect(decoded.prof.fonts).toEqual({ 'Arial': true, 'Helvetica': false });
+    expect(decoded.seed).toBe(config.seed);
+  });
+
+  test('different containers produce different cookie values', () => {
+    const config1 = ContainerEnv.buildConfig('firefox-container-1');
+    const config2 = ContainerEnv.buildConfig('firefox-container-2');
+    const cookie1 = encodeURIComponent(JSON.stringify(config1));
+    const cookie2 = encodeURIComponent(JSON.stringify(config2));
+    expect(cookie1).not.toBe(cookie2);
+    const decoded1 = JSON.parse(decodeURIComponent(cookie1));
+    const decoded2 = JSON.parse(decodeURIComponent(cookie2));
+    expect(decoded1.seed).not.toBe(decoded2.seed);
+  });
+});
+
 describe('ContainerEnv.getTimezone', () => {
   beforeEach(() => {
     ContainerEnv.updateTimezone(null);

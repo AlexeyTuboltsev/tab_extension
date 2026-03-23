@@ -1,46 +1,19 @@
 // Unified per-container environment: timezone + fingerprint profile
-// Reads XOR-obfuscated config from cookie at document_start, decodes it,
-// deletes the cookie immediately, then injects overrides into page context
-// via <script> tag (exportFunction broke in FF 148+).
+// Reads config synchronously from cookie at document_start, then injects
+// overrides into the page context via <script> tag (exportFunction broke in FF 148+).
 
 (function () {
   'use strict';
 
-  // --- XOR decode helpers (must match background/container-env.js) ---
-  function hashString(str) {
-    let hash = 5381;
-    for (let i = 0; i < str.length; i++) {
-      hash = ((hash << 5) + hash) + str.charCodeAt(i);
-      hash = hash & hash;
-    }
-    return Math.abs(hash);
-  }
-
-  function deriveKey() {
-    const extUrl = browser.runtime.getURL('');
-    const keyNum = String(hashString(extUrl));
-    return keyNum.repeat(Math.ceil(32 / keyNum.length)).slice(0, 32);
-  }
-
-  function xorDecode(encoded, key) {
-    const str = atob(encoded);
-    const out = [];
-    for (let i = 0; i < str.length; i++) {
-      out.push(String.fromCharCode(str.charCodeAt(i) ^ key.charCodeAt(i % key.length)));
-    }
-    return out.join('');
-  }
-
   // --- Read config from cookie synchronously ---
   let config = null;
   try {
-    const cipherKey = deriveKey();
     const cookies = document.cookie.split(';');
     for (const c of cookies) {
       const trimmed = c.trim();
       if (trimmed.startsWith('__ctm_env=')) {
         const raw = trimmed.slice('__ctm_env='.length);
-        config = JSON.parse(xorDecode(raw, cipherKey));
+        config = JSON.parse(decodeURIComponent(raw));
         // Delete cookie immediately — before page scripts can read it
         document.cookie = '__ctm_env=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
         break;
