@@ -1,6 +1,6 @@
 # Container Tab Manager — TODO
 
-## Fix: Incognito windows blocked by extension
+## Fix: Incognito windows blocked by extension — DONE
 
 Incognito (private) windows are currently broken — the extension's `webRequest.onBeforeRequest` handler blocks/cancels requests because it tries to create containers, but Firefox doesn't support `contextualIdentities` in private windows.
 
@@ -21,7 +21,7 @@ High — this is a bug that breaks basic browser functionality.
 
 ---
 
-## Strip referrer on shared provider navigations
+## Strip referrer on shared provider navigations — DONE
 
 When a shared provider (PayPal, Stripe, etc.) opens from a merchant's container, third-party tracker scripts on the provider page can see `document.referrer` revealing which merchant you came from. Combined with fingerprinting, this lets trackers correlate shopping activity across merchants.
 
@@ -73,7 +73,7 @@ Object.defineProperty(document, 'referrer', {
 
 ---
 
-## Shared provider auth: keep user logged in across payment flows
+## Shared provider auth: keep user logged in across payment flows — DONE
 
 When PayPal opens from a merchant's container (shared context), the user has to log in every time because PayPal's login state (cookies, localStorage, etc.) lives in the PayPal saved container, not the merchant's.
 
@@ -158,7 +158,7 @@ Implemented in `background/ip-timezone.js`. Detects timezone/country from public
 
 Implemented in `background/container-env.js` (`pickProfile`) and `data/profiles.json`. IP → country → profile pool → deterministic selection by container seed. Profiles include platform, screen, GPU strings, fonts, languages. Applied via `defGetter` overrides in content script.
 
-## Font list mimicry per profile
+## Font list mimicry per profile — DONE
 
 Spoof the installed font list to match the most common real-world font combination for the profile's OS+locale. Font enumeration is one of the strongest fingerprint signals (17,372 distinct combinations found across 2M fingerprints in research).
 
@@ -278,7 +278,7 @@ Parse CreepJS source (~20 modules, ~70 checks) and other fingerprinting librarie
 
 ---
 
-## Testing strategy
+## Testing strategy — DONE
 
 Multi-layer approach to verify fingerprint spoofing works correctly and isn't detectable.
 
@@ -354,6 +354,32 @@ Ensure spoofing doesn't visibly break page rendering:
 
 ---
 
+## Export/import container configuration
+
+Moving from a temporary extension to a signed .xpi loses all saved containers and rules because Firefox assigns a different internal UUID, and `browser.storage.local` is keyed by UUID, not extension ID.
+
+Add export/import functionality so users can back up and restore their configuration (saved containers, global rules, container rules, preferences).
+
+### Priority
+Medium — essential for anyone switching between temp and signed installs.
+
+---
+
 ## Encrypt/obfuscate extension cookies
 
 All cookies set or managed by the extension (container tracking, timezone cache, etc.) should be encrypted or obfuscated to prevent fingerprinters or page scripts from reading them and using them as an additional tracking signal. This includes any cookies used for cross-script communication (e.g., timezone data passed between background and content scripts).
+
+---
+
+## CreepJS automated CI testing
+
+CreepJS-based fingerprint detection should be the primary testing method. Automate running CreepJS in CI to verify that our spoofing passes without lies, trash, or red flags.
+
+### Approach
+- Run headed Firefox with the extension loaded in CI (GitHub Actions)
+- Navigate to CreepJS in multiple containers
+- Parse the CreepJS results page for: trust score, lies count, trash count, red-flagged sections
+- Fail CI if any detection is triggered
+
+### Priority
+Low — can be done later, after core features are stable.
