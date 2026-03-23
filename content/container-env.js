@@ -339,6 +339,16 @@
         JSON.stringify(TZ) + ',' + TZ_OFFSET + ',' +
         JSON.stringify(GMT_STRING) + ',' + JSON.stringify(TZ_LONG_NAME) + ');\n';
 
+      // Build preamble that fakes self.location in blob Workers to match original URL
+      function locationPreamble(href) {
+        return '(function(){try{var u=new URL(' + JSON.stringify(href) + ');' +
+          'Object.defineProperty(self,"location",{value:{' +
+          'href:u.href,origin:u.origin,protocol:u.protocol,' +
+          'host:u.host,hostname:u.hostname,port:u.port,' +
+          'pathname:u.pathname,search:u.search,hash:u.hash,' +
+          'toString:function(){return u.href}},configurable:true})}catch(e){}})();\n';
+      }
+
       var OrigWorker = Worker;
       Worker = function (url, opts) {
         var scriptURL = (typeof url === 'object' && url.href) ? url.href : String(url);
@@ -348,21 +358,22 @@
             !scriptURL.startsWith('http:') && !scriptURL.startsWith('https:')) {
           try { scriptURL = new URL(scriptURL, location.href).href; } catch (e) {}
         }
+        var locPre = locationPreamble(scriptURL);
         try {
           if (scriptURL.startsWith('blob:')) {
             var xhr = new XMLHttpRequest();
             xhr.open('GET', scriptURL, false);
             xhr.send();
             if (xhr.status === 200 || xhr.status === 0) {
-              var blob = new Blob([tzPatchCode + xhr.responseText], { type: 'text/javascript' });
+              var blob = new Blob([locPre + tzPatchCode + xhr.responseText], { type: 'text/javascript' });
               return new OrigWorker(URL.createObjectURL(blob), opts);
             }
           }
           if (opts && opts.type === 'module') {
-            var mBlob = new Blob([tzPatchCode + 'import "' + scriptURL + '";'], { type: 'text/javascript' });
+            var mBlob = new Blob([locPre + tzPatchCode + 'import "' + scriptURL + '";'], { type: 'text/javascript' });
             return new OrigWorker(URL.createObjectURL(mBlob), opts);
           }
-          var blob2 = new Blob([tzPatchCode + 'importScripts("' + scriptURL + '");'], { type: 'text/javascript' });
+          var blob2 = new Blob([locPre + tzPatchCode + 'importScripts("' + scriptURL + '");'], { type: 'text/javascript' });
           return new OrigWorker(URL.createObjectURL(blob2));
         } catch (e) {
           return new OrigWorker(url, opts);
@@ -379,17 +390,18 @@
               !scriptURL.startsWith('http:') && !scriptURL.startsWith('https:')) {
             try { scriptURL = new URL(scriptURL, location.href).href; } catch (e) {}
           }
+          var locPre = locationPreamble(scriptURL);
           try {
             if (scriptURL.startsWith('blob:')) {
               var xhr = new XMLHttpRequest();
               xhr.open('GET', scriptURL, false);
               xhr.send();
               if (xhr.status === 200 || xhr.status === 0) {
-                var blob = new Blob([tzPatchCode + xhr.responseText], { type: 'text/javascript' });
+                var blob = new Blob([locPre + tzPatchCode + xhr.responseText], { type: 'text/javascript' });
                 return new OrigSharedWorker(URL.createObjectURL(blob), opts);
               }
             }
-            var blob2 = new Blob([tzPatchCode + 'importScripts("' + scriptURL + '");'], { type: 'text/javascript' });
+            var blob2 = new Blob([locPre + tzPatchCode + 'importScripts("' + scriptURL + '");'], { type: 'text/javascript' });
             return new OrigSharedWorker(URL.createObjectURL(blob2), opts);
           } catch (e) {
             return new OrigSharedWorker(url, opts);
