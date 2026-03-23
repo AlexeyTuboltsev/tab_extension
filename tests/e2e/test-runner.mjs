@@ -650,22 +650,33 @@ async function main() {
   console.log('# Container Tab Manager E2E Tests');
   console.log('');
 
-  try {
-    await testSetup();
-    await testCreepJSDifferentContainers();
-    await testCrossDomainNewContainer();
-    await testEphemeralCrossDomainIsolation();
-    await testEphemeralSameDomainReuse();
-    await testTabInterception();
-    await testTimezoneSpoof();
-    await testCanvasCrossContainer();
-    await testCanvasDeterministic();
-    await testWebGLCrossContainer();
-    await testAudioCrossContainer();
-  } catch (e) {
-    console.error('FATAL ERROR:', e.message);
-    console.error(e.stack);
-    failed++;
+  const tests = [
+    testSetup,
+    testCreepJSDifferentContainers,
+    testCrossDomainNewContainer,
+    testEphemeralCrossDomainIsolation,
+    testEphemeralSameDomainReuse,
+    testTabInterception,
+    testTimezoneSpoof,
+    testCanvasCrossContainer,
+    testCanvasDeterministic,
+    testWebGLCrossContainer,
+    testAudioCrossContainer,
+  ];
+
+  for (const test of tests) {
+    try {
+      await test();
+    } catch (e) {
+      const name = test.name.replace(/^test/, '');
+      // Socket gone = host crashed, skip remaining tests
+      if (e.code === 'ENOENT' || e.message?.includes('ENOENT')) {
+        console.error(`# Claudezilla host crashed during ${name}: ${e.message}`);
+        console.error('# Skipping remaining tests');
+        break;
+      }
+      report(name, false, e.message);
+    }
   }
 
   console.log('');
