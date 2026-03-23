@@ -490,62 +490,92 @@ async function testEphemeralSameDomainReuse() {
     `before=${csid1}, after=${csid2}`);
 }
 
-async function testCombinedHashDifferentContainers() {
-  // Open fingerprint page in first container
-  const r1 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?hash=1' });
-  if (!r1.success) {
-    report('Combined Hash: different containers', false, 'createWindow #1 failed');
+/**
+ * Poll a tab until CreepJS finishes computing and the FP ID hash appears in the DOM.
+ * CreepJS renders results into #fingerprint-data .ellipsis-all elements.
+ * The first one contains "FP ID: <hash>".
+ * Returns the hash string, or null on timeout.
+ */
+async function waitForCreepJSHash(tabId, timeoutMs = 90000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const r = await sendCommand('evaluate', {
+      tabId,
+      expression: `(() => {
+        const el = document.querySelector('#fingerprint-data .ellipsis-all');
+        if (!el) return null;
+        const text = el.textContent || '';
+        const match = text.match(/FP ID:\\s*([a-f0-9]{32,})/);
+        return match ? match[1] : null;
+      })()`
+    });
+    const val = r.result?.result;
+    if (val && val !== 'null') return val;
+    await sleep(5000);
+  }
+  return null;
+}
+
+async function testCreepJSDifferentContainers() {
+  const CREEPJS_URL = 'https://abrahamjuliot.github.io/creepjs/';
+
+  // Open CreepJS in first container
+  const c1 = await sendCommand('createWindow', { url: CREEPJS_URL });
+  if (!c1.success) {
+    report('CreepJS: different hash per container', false, 'createWindow #1 failed');
     return;
   }
 
   let tab1;
   try {
     tab1 = await waitForTab(t =>
-      (t.url || '').includes('hash=1') && t.cookieStoreId !== 'firefox-default'
+      (t.url || '').includes('creepjs') && t.cookieStoreId !== 'firefox-default'
     );
   } catch (e) {
-    report('Combined Hash: different containers', false, 'Tab #1 never appeared in container');
+    report('CreepJS: different hash per container', false, 'Tab #1 never appeared in container');
     return;
   }
   const tabId1 = tab1.id ?? tab1.tabId;
 
-  // Open fingerprint page in second container
-  const r2 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?hash=2' });
-  if (!r2.success) {
-    report('Combined Hash: different containers', false, 'createWindow #2 failed');
+  // Open CreepJS in second container
+  const c2 = await sendCommand('createWindow', { url: CREEPJS_URL });
+  if (!c2.success) {
+    report('CreepJS: different hash per container', false, 'createWindow #2 failed');
     return;
   }
 
   let tab2;
   try {
-    tab2 = await waitForTab(t =>
-      (t.url || '').includes('hash=2') && t.cookieStoreId !== 'firefox-default'
-    );
+    tab2 = await waitForTab(t => {
+      const url = t.url || '';
+      const id = t.id ?? t.tabId;
+      return url.includes('creepjs') && t.cookieStoreId !== 'firefox-default' && id !== tabId1;
+    });
   } catch (e) {
-    report('Combined Hash: different containers', false, 'Tab #2 never appeared in container');
+    report('CreepJS: different hash per container', false, 'Tab #2 never appeared in container');
     return;
   }
   const tabId2 = tab2.id ?? tab2.tabId;
 
   if (tab1.cookieStoreId === tab2.cookieStoreId) {
-    report('Combined Hash: different containers', false,
+    report('CreepJS: different hash per container', false,
       `Both tabs in same container: ${tab1.cookieStoreId}`);
     return;
   }
 
-  // Wait for page to fully render including async audio fingerprint
-  await sleep(8000);
+  // Wait for CreepJS to compute fingerprints (takes 15-30s)
+  console.log('# Waiting for CreepJS to compute hashes (up to 60s each)...');
+  const hash1 = await waitForCreepJSHash(tabId1);
+  const hash2 = await waitForCreepJSHash(tabId2);
 
-  // Read combined hash from both tabs (use evaluate directly — no script injection needed for DOM reads)
-  const eval1 = await sendCommand('evaluate', { tabId: tabId1, expression: 'document.getElementById("combinedHash").textContent' });
-  const eval2 = await sendCommand('evaluate', { tabId: tabId2, expression: 'document.getElementById("combinedHash").textContent' });
-  const hash1 = eval1.result?.result;
-  const hash2 = eval2.result?.result;
+  if (!hash1 || !hash2) {
+    report('CreepJS: different hash per container', false,
+      `Timeout waiting for CreepJS. hash1=${hash1}, hash2=${hash2}`);
+    return;
+  }
 
-  const valid = hash1 && hash2 && hash1 !== 'Computing...' && hash2 !== 'Computing...';
   const differ = hash1 !== hash2;
-
-  report('Combined Hash: different containers', valid && differ,
+  report('CreepJS: different hash per container', differ,
     `hash1=${hash1}, hash2=${hash2}, containers=${tab1.cookieStoreId}/${tab2.cookieStoreId}`);
 }
 
@@ -602,7 +632,7 @@ async function main() {
 
   try {
     await testSetup();
-    await testCombinedHashDifferentContainers();
+    await testCreepJSDifferentContainers();
     await testCrossDomainNewContainer();
     await testEphemeralCrossDomainIsolation();
     await testEphemeralSameDomainReuse();
