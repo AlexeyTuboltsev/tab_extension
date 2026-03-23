@@ -26,63 +26,59 @@ describe('Container seed isolation', () => {
     expect(seed).toBeGreaterThan(0);
   });
 
-  test('seeds produce different canvas noise patterns', () => {
+  test('seeds produce different canvas transform values', () => {
     const seeds = containers.map(c => hashString(c));
 
-    // Simulate 100-pixel canvas, collect R-channel noise for each seed
-    const patterns = seeds.map(seed => {
-      const result = [];
-      for (let i = 0; i < 400; i += 4) {
-        result.push(noise(seed, i) & 1);
-      }
-      return result.join('');
+    const transforms = seeds.map(seed => {
+      var tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
+      var ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
+      return tx.toFixed(8) + ',' + ty.toFixed(8);
     });
 
-    const uniquePatterns = new Set(patterns);
-    expect(uniquePatterns.size).toBe(containers.length);
+    const uniqueTransforms = new Set(transforms);
+    expect(uniqueTransforms.size).toBe(containers.length);
   });
 
-  test('same seed always produces same noise pattern', () => {
+  test('same seed always produces same canvas transform', () => {
     const seed = hashString('firefox-container-42');
-    const pattern1 = [];
-    const pattern2 = [];
-    for (let i = 0; i < 1000; i += 4) {
-      pattern1.push(noise(seed, i) & 1);
-      pattern2.push(noise(seed, i) & 1);
-    }
-    expect(pattern1).toEqual(pattern2);
+    var tx1 = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
+    var tx2 = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
+    expect(tx1).toBe(tx2);
   });
 
   test('sub-pixel offset differs per container', () => {
     const offsets = containers.map(c => {
       const seed = hashString(c);
-      return (seed % 1000) / 1000000000;
+      return ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
     });
     const uniqueOffsets = new Set(offsets);
     expect(uniqueOffsets.size).toBe(containers.length);
   });
 
-  test('sub-pixel offset is very small (invisible)', () => {
+  test('sub-pixel offset is in 0.001–0.01 range', () => {
     for (const c of containers) {
       const seed = hashString(c);
-      const offset = (seed % 1000) / 1000000000;
-      expect(offset).toBeLessThan(0.000001);
-      expect(offset).toBeGreaterThanOrEqual(0);
+      const tx = ((noise(seed, 1) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
+      const ty = ((noise(seed, 2) & 0xFFFF) / 0xFFFF) * 0.009 + 0.001;
+      expect(tx).toBeGreaterThanOrEqual(0.001);
+      expect(tx).toBeLessThanOrEqual(0.01);
+      expect(ty).toBeGreaterThanOrEqual(0.001);
+      expect(ty).toBeLessThanOrEqual(0.01);
     }
   });
 
-  test('audio frequency offset is tiny', () => {
+  test('audio compressor offset is tiny', () => {
     for (const c of containers) {
       const seed = hashString(c);
-      const freqOffset = ((seed % 100) - 50) * 0.001;
-      expect(Math.abs(freqOffset)).toBeLessThanOrEqual(0.05);
+      const thresholdOffset = ((noise(seed, 30) & 0xFF) - 128) * 0.0001;
+      expect(Math.abs(thresholdOffset)).toBeLessThanOrEqual(0.0128);
     }
   });
 
-  test('audio frequency offset varies between containers', () => {
+  test('audio compressor offset varies between containers', () => {
     const offsets = containers.map(c => {
       const seed = hashString(c);
-      return ((seed % 100) - 50) * 0.001;
+      return ((noise(seed, 30) & 0xFF) - 128) * 0.0001;
     });
     const uniqueOffsets = new Set(offsets);
     expect(uniqueOffsets.size).toBeGreaterThan(1);

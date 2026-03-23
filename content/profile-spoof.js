@@ -18,6 +18,18 @@
 
   // --- Navigator property patches ---
 
+  // Save original getters BEFORE patching to avoid recursion
+  var origNavGetters = {};
+  ['platform', 'hardwareConcurrency', 'deviceMemory', 'languages', 'language'].forEach(function (prop) {
+    try {
+      origNavGetters[prop] = Object.getOwnPropertyDescriptor(
+        Object.getPrototypeOf(window.wrappedJSObject.navigator), prop
+      )?.get || null;
+    } catch (e) {
+      origNavGetters[prop] = null;
+    }
+  });
+
   function patchNavigatorProp(prop, getter) {
     try {
       Object.defineProperty(
@@ -36,17 +48,17 @@
 
   // navigator.platform
   patchNavigatorProp('platform', function () {
-    return profile ? profile.platform : navigator.wrappedJSObject.__lookupGetter__('platform')?.call(navigator) || 'Win32';
+    return profile ? profile.platform : (origNavGetters.platform ? origNavGetters.platform.call(navigator) : 'Win32');
   });
 
   // navigator.hardwareConcurrency
   patchNavigatorProp('hardwareConcurrency', function () {
-    return profile ? profile.hardwareConcurrency : navigator.wrappedJSObject.__lookupGetter__('hardwareConcurrency')?.call(navigator) || 4;
+    return profile ? profile.hardwareConcurrency : (origNavGetters.hardwareConcurrency ? origNavGetters.hardwareConcurrency.call(navigator) : 4);
   });
 
   // navigator.deviceMemory
   patchNavigatorProp('deviceMemory', function () {
-    return profile ? profile.deviceMemory : navigator.wrappedJSObject.__lookupGetter__('deviceMemory')?.call(navigator) || 8;
+    return profile ? profile.deviceMemory : (origNavGetters.deviceMemory ? origNavGetters.deviceMemory.call(navigator) : 8);
   });
 
   // navigator.languages
@@ -54,7 +66,7 @@
     if (profile && profile.languages) {
       return cloneInto(profile.languages, window);
     }
-    return navigator.wrappedJSObject.__lookupGetter__('languages')?.call(navigator) || cloneInto(['en-US'], window);
+    return origNavGetters.languages ? origNavGetters.languages.call(navigator) : cloneInto(['en-US'], window);
   });
 
   // navigator.language
@@ -62,7 +74,7 @@
     if (profile && profile.languages && profile.languages.length > 0) {
       return profile.languages[0];
     }
-    return navigator.wrappedJSObject.__lookupGetter__('language')?.call(navigator) || 'en-US';
+    return origNavGetters.language ? origNavGetters.language.call(navigator) : 'en-US';
   });
 
   // --- Screen property patches ---

@@ -24,15 +24,19 @@ async function loadProfiles() {
     TabInterceptor.setup();
     ContextMenu.setup();
     PageActionIndicator.setup();
-    await registerEnvScript();
+    // container-env.js is now manifest-declared for earliest document_start timing
     await IpTimezone.init();
+    const profiles = await loadProfiles();
+    if (profiles) ContainerEnv.setProfiles(profiles);
     const ipInfo = await IpTimezone.getIPInfo();
-    if (ipInfo && ipInfo.timezone) {
-      ContainerEnv.updateTimezone(ipInfo.timezone);
+    if (ipInfo) {
+      if (ipInfo.timezone) ContainerEnv.updateTimezone(ipInfo.timezone);
+      if (ipInfo.country) ContainerEnv.setCountry(ipInfo.country);
     }
     IpTimezone.onChange((info) => {
       console.log('[TZ] IP changed — updating timezone to', info.timezone);
       ContainerEnv.updateTimezone(info.timezone);
+      if (info.country) ContainerEnv.setCountry(info.country);
     });
     // Recheck IP on every new tab to catch VPN switches
     browser.tabs.onCreated.addListener(() => IpTimezone.maybeRefresh());
@@ -51,22 +55,6 @@ async function loadProfiles() {
   }
 })();
 
-let registeredEnvScript = null;
-
-async function registerEnvScript() {
-  if (registeredEnvScript) {
-    await registeredEnvScript.unregister();
-    registeredEnvScript = null;
-  }
-
-  registeredEnvScript = await browser.contentScripts.register({
-    matches: ['<all_urls>'],
-    js: [{ file: 'content/container-env.js' }],
-    runAt: 'document_start',
-    allFrames: true,
-  });
-  console.log('[Env] Registered container environment content script');
-}
 
 async function handleMessage(message, sender) {
   switch (message.type) {
