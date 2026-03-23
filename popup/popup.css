@@ -69,6 +69,10 @@ body { width: 400px; height: auto; font-family: -apple-system, BlinkMacSystemFon
 .provider-add button:hover { background: var(--accent-hover); }
 
 /* Color dots */
+/* Version footer */
+.version-footer { text-align: right; padding: 4px 12px 6px; color: var(--text-dim, #888); font-size: 10px; }
+
+/* Color dots */
 .color-blue { background: #37adff; } .color-turquoise { background: #00c79a; } .color-green { background: #51cd00; }
 .color-yellow { background: #ffcb00; } .color-orange { background: #ff9f00; } .color-red { background: #ff613d; }
 .color-pink { background: #ff4bda; } .color-purple { background: #af51f5; } .color-toolbar { background: #7c7c7d; }
