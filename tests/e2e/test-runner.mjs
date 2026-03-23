@@ -687,6 +687,27 @@ async function testCrossDomainNewContainer() {
     `before=${csid1}, after=${csid2}`);
 }
 
+async function cleanupExtraWindows() {
+  // Close all non-essential tabs to reduce Firefox resource pressure in Docker.
+  // CreepJS, cross-domain, and ephemeral tests each open windows that are no
+  // longer needed by this point.
+  const tabs = await sendCommand('queryAllTabs');
+  if (!tabs.success) return;
+  const allTabs = tabs.result?.tabs || tabs.result || [];
+  let closed = 0;
+  for (const t of allTabs) {
+    const url = t.url || '';
+    const tabId = t.id ?? t.tabId;
+    if (!url.startsWith('about:')) {
+      try {
+        await sendCommand('closeTab', { tabId });
+        closed++;
+      } catch (e) { /* ignore */ }
+    }
+  }
+  report('Cleanup: close extra windows', true, `closed ${closed} tabs`);
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 
 async function main() {
@@ -700,6 +721,7 @@ async function main() {
     testCrossDomainNewContainer,
     testEphemeralCrossDomainIsolation,
     testEphemeralSameDomainReuse,
+    cleanupExtraWindows,
     testTabInterception,
     testTimezoneSpoof,
     testCanvasCrossContainer,
