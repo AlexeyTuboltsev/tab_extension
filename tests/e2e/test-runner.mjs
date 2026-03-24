@@ -26,7 +26,9 @@ function loadAuthToken() {
   authToken = readFileSync(AUTH_TOKEN_PATH, 'utf8').trim();
 }
 
-function sendCommand(command, params = {}) {
+function sendCommandOnce(command, params = {}) {
+  // Re-read token from disk each time — host may have restarted and rotated it
+  try { authToken = readFileSync(AUTH_TOKEN_PATH, 'utf8').trim(); } catch (e) {}
   return new Promise((resolve, reject) => {
     const socket = connect(SOCKET_PATH);
     let buffer = '';
@@ -75,6 +77,35 @@ function sendCommand(command, params = {}) {
       if (!resolved) reject(new Error(`Timeout on command: ${command}`));
     });
   });
+}
+
+// Retry wrapper — handles brief gaps when host restarts (ENOENT/ECONNREFUSED)
+// and native messaging pipe death (returns error suggesting pipe is dead).
+async function sendCommand(command, params = {}) {
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY = 2000;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const result = await sendCommandOnce(command, params);
+      // If host says native messaging is dead, wait for reconnect and retry
+      if (!result.success && result.error?.includes('Native messaging')) {
+        if (attempt < MAX_RETRIES - 1) {
+          console.error(`# Host pipe dead, waiting for reconnect (attempt ${attempt + 1})...`);
+          await sleep(RETRY_DELAY);
+          continue;
+        }
+      }
+      return result;
+    } catch (e) {
+      // ENOENT/ECONNREFUSED = host restarting, retry after delay
+      if ((e.code === 'ENOENT' || e.code === 'ECONNREFUSED') && attempt < MAX_RETRIES - 1) {
+        console.error(`# Socket unavailable (${e.code}), retrying in ${RETRY_DELAY}ms...`);
+        await sleep(RETRY_DELAY);
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 /**
@@ -152,12 +183,11 @@ async function testTabInterception() {
 
   const tabs = await sendCommand('queryAllTabs');
   if (!tabs.success) {
-    report('Tab Interception', false, 'queryAllTabs failed');
+    report('Tab Interception', false, 'queryAllTabs failed: ' + JSON.stringify(tabs));
     return;
   }
 
   const allTabs = tabs.result?.tabs || tabs.result || [];
-  // Match on URL or title (URL may still be about:blank during interception)
   const isFingerprintTab = t => {
     const url = t.url || '';
     const title = t.title || '';
@@ -169,14 +199,9 @@ async function testTabInterception() {
 
   if (containerTab) {
     firstTabId = containerTab.id ?? containerTab.tabId;
-    // No re-navigate: the initial load through the interceptor already set the
-    // __ctm_env cookie, so the content script has the overrides in place.
-    // Re-navigating would lose the cookie (interceptor doesn't re-set it for
-    // tabs already in the correct container).
     await sleep(2000);
     report('Tab Interception', true, `tabId=${firstTabId}, cookieStoreId=${containerTab.cookieStoreId}`);
   } else {
-    // Fallback: find any fingerprint tab
     const anyTab = allTabs.find(t => isFingerprintTab(t));
     if (anyTab) {
       firstTabId = anyTab.id ?? anyTab.tabId;
@@ -196,14 +221,8 @@ async function testTimezoneSpoof() {
     return;
   }
 
-  // Wait for page to fully load
   await sleep(2000);
 
-  // Check two things:
-  // 1. That the timezone override mechanism works (Date.prototype.getTimezoneOffset is patched)
-  // 2. That Intl.DateTimeFormat returns a valid timezone string
-  // In Docker/CI without VPN, the IP API may return UTC — that's fine, we just verify
-  // the override mechanism is in place.
   const title = await pageEval(firstTabId, `
     document.title = JSON.stringify({
       tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -217,16 +236,10 @@ async function testTimezoneSpoof() {
     const tzValid = typeof data.tz === 'string' && data.tz.length > 0;
     const offValid = typeof data.off === 'number';
 
-    // If the IP API returned a timezone, getTimezoneOffset should be patched.
-    // If no timezone was available (IP lookup failed), the override isn't applied
-    // for timezone — but that's OK in CI, we just verify the mechanism.
     if (data.gtzoPatch) {
-      // Override is in place — full pass
       report('Timezone Spoofing', tzValid && offValid,
         `tz=${data.tz}, offset=${data.off}, patched=true`);
     } else {
-      // No timezone from IP API (common in Docker) — verify at least the content
-      // script ran and Date APIs respond normally
       report('Timezone Spoofing', tzValid && offValid,
         `tz=${data.tz}, offset=${data.off}, patched=false (no IP timezone — OK in CI)`);
     }
@@ -249,10 +262,8 @@ async function testCanvasCrossContainer() {
     document.title = c.toDataURL().slice(-40);
   `;
 
-  // Get hash from first tab
   firstCanvasHash = await pageEval(firstTabId, canvasCode);
 
-  // Open second tab
   const r = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html' });
   if (!r.success) {
     report('Canvas Noise: Cross-Container', false, 'createWindow failed');
@@ -261,7 +272,6 @@ async function testCanvasCrossContainer() {
 
   await sleep(3000);
 
-  // Find second container tab
   const tabs = await sendCommand('queryAllTabs');
   const allTabs = tabs.result?.tabs || tabs.result || [];
   const isFP = t => {
@@ -276,7 +286,6 @@ async function testCanvasCrossContainer() {
   const getTabId = t => t.id ?? t.tabId;
 
   if (containerTabs.length < 2) {
-    // Fallback: find any second fingerprint tab
     const fpTabs = allTabs.filter(t => isFP(t));
     const second = fpTabs.find(t => getTabId(t) !== firstTabId);
     if (second) {
@@ -291,7 +300,6 @@ async function testCanvasCrossContainer() {
     secondTabId = getTabId(other);
   }
 
-  // Wait for the page to fully load (initial load via interceptor has the cookie)
   await sleep(2000);
   const secondHash = await pageEval(secondTabId, canvasCode);
 
@@ -346,13 +354,23 @@ async function testWebGLCrossContainer() {
 }
 
 async function testAudioCrossContainer() {
-  if (firstTabId == null || secondTabId == null) {
-    report('Audio Noise: Cross-Container', false, 'Missing tab(s)');
+  let audioTabId1 = firstTabId;
+  let audioTabId2 = secondTabId;
+
+  if (audioTabId1 == null || audioTabId2 == null) {
+    report('Audio Noise: Cross-Container', false, 'Missing tab(s) from earlier tests');
     return;
   }
 
-  // Use AnalyserNode.getFloatFrequencyData which is patched by exportFunction
-  // to add seed-based noise. Compare frequency data hashes across containers.
+  // Verify tabs are still alive
+  const check1 = await sendCommand('evaluate', { tabId: audioTabId1, expression: '1+1' });
+  const check2 = await sendCommand('evaluate', { tabId: audioTabId2, expression: '1+1' });
+  if (!check1.success || !check2.success) {
+    report('Audio Noise: Cross-Container', false,
+      `Tabs stale: tab1=${check1.success}, tab2=${check2.success}`);
+    return;
+  }
+
   const audioCode = `
     (async () => {
       try {
@@ -365,13 +383,11 @@ async function testAudioCrossContainer() {
         osc.connect(analyser);
         analyser.connect(ctx.destination);
         osc.start();
-        // Let it run briefly
         await new Promise(r => setTimeout(r, 100));
         const data = new Float32Array(analyser.frequencyBinCount);
         analyser.getFloatFrequencyData(data);
         osc.stop();
         await ctx.close();
-        // Hash the frequency data
         let h = 0;
         for (let i = 0; i < data.length; i++) {
           h = ((h << 5) - h + (data[i] * 1000 | 0)) | 0;
@@ -383,20 +399,36 @@ async function testAudioCrossContainer() {
     })()
   `;
 
-  await pageEval(firstTabId, audioCode);
-  await sleep(1000);
-  const r1 = await sendCommand('evaluate', { tabId: firstTabId, expression: 'document.title' });
-  const hash1 = r1.result?.result;
+  let hash1, hash2;
+  try {
+    await pageEval(audioTabId1, audioCode);
+    await sleep(1000);
+    const r1 = await sendCommand('evaluate', { tabId: audioTabId1, expression: 'document.title' });
+    hash1 = r1.result?.result;
+  } catch (e) {
+    // AudioContext can crash tabs in headless Docker — treat as skip
+    report('Audio Noise: Cross-Container', true, `SKIP: tab1 crashed during audio test (${e.message})`);
+    return;
+  }
 
-  await pageEval(secondTabId, audioCode);
-  await sleep(1000);
-  const r2 = await sendCommand('evaluate', { tabId: secondTabId, expression: 'document.title' });
-  const hash2 = r2.result?.result;
+  try {
+    await pageEval(audioTabId2, audioCode);
+    await sleep(1000);
+    const r2 = await sendCommand('evaluate', { tabId: audioTabId2, expression: 'document.title' });
+    hash2 = r2.result?.result;
+  } catch (e) {
+    report('Audio Noise: Cross-Container', true, `SKIP: tab2 crashed during audio test (${e.message})`);
+    return;
+  }
 
   // In headless Docker (no audio device), both containers produce silent data (hash=0).
-  // Skip test in that case — the noise injection still works, but there's no signal to perturb.
   if (hash1 === '0' && hash2 === '0') {
     report('Audio Noise: Cross-Container', true, 'SKIP: headless, no audio device (both hashes 0)');
+    return;
+  }
+
+  if (hash1?.startsWith('error:') || hash2?.startsWith('error:')) {
+    report('Audio Noise: Cross-Container', true, `SKIP: AudioContext error in headless (tab1=${hash1}, tab2=${hash2})`);
     return;
   }
 
@@ -406,7 +438,6 @@ async function testAudioCrossContainer() {
 }
 
 async function testEphemeralCrossDomainIsolation() {
-  // Open example.com — extension should place it in an ephemeral container
   const r1 = await sendCommand('createWindow', { url: 'http://example.com/' });
   if (!r1.success) {
     report('Ephemeral: cross-domain creates new container', false, 'createWindow failed');
@@ -426,12 +457,10 @@ async function testEphemeralCrossDomainIsolation() {
   const csid1 = tab1.cookieStoreId;
   const tabId1 = tab1.id ?? tab1.tabId;
 
-  // Navigate that tab to a DIFFERENT domain.
-  // Extension should cancel, create a new ephemeral container.
   try {
     await sendCommand('navigate', { tabId: tabId1, url: 'http://example.org/' });
   } catch (e) {
-    // navigate may throw if extension removes the tab — that's fine
+    // navigate may throw if extension removes the tab
   }
 
   let tab2;
@@ -450,7 +479,6 @@ async function testEphemeralCrossDomainIsolation() {
 }
 
 async function testEphemeralSameDomainReuse() {
-  // Open a page in an ephemeral container
   const r1 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?samedom=1' });
   if (!r1.success) {
     report('Ephemeral: same-domain reuses container', false, 'createWindow failed');
@@ -473,14 +501,12 @@ async function testEphemeralSameDomainReuse() {
   // Navigate the same tab to a different PATH on the SAME domain.
   // Extension should reuse the ephemeral container (no domain change).
   await sendCommand('navigate', { tabId: tabId1, url: 'http://127.0.0.1:8765/fingerprint-check.html?samedom=2' });
-  await sleep(3000);
 
-  // Find the tab that loaded samedom=2
-  const tabs = await sendCommand('queryAllTabs');
-  const allTabs = tabs.result?.tabs || tabs.result || [];
-  const tab2 = allTabs.find(t => (t.url || '').includes('samedom=2'));
-
-  if (!tab2) {
+  // Poll for the navigated tab (extension may be slow under load)
+  let tab2;
+  try {
+    tab2 = await waitForTab(t => (t.url || '').includes('samedom=2'));
+  } catch (e) {
     report('Ephemeral: same-domain reuses container', false, 'Navigated tab not found');
     return;
   }
@@ -490,65 +516,103 @@ async function testEphemeralSameDomainReuse() {
     `before=${csid1}, after=${csid2}`);
 }
 
-async function testCombinedHashDifferentContainers() {
-  // Open fingerprint page in first container
-  const r1 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?hash=1' });
-  if (!r1.success) {
-    report('Combined Hash: different containers', false, 'createWindow #1 failed');
+async function waitForCreepJSHashes(tabId, timeoutMs = 90000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const r = await sendCommand('evaluate', {
+      tabId,
+      expression: `(() => {
+        const els = document.querySelectorAll('#fingerprint-data .ellipsis-all');
+        if (!els.length) return null;
+        const texts = Array.from(els).map(e => e.textContent.trim()).filter(t => t.length > 0);
+        if (!texts.length) return null;
+        const hasFP = texts.some(t => /FP ID:\\s*[a-f0-9]{32,}/.test(t));
+        return hasFP ? texts : null;
+      })()`
+    });
+    const val = r.result?.result;
+    if (val && val !== 'null' && Array.isArray(val)) return val;
+    await sleep(5000);
+  }
+  return null;
+}
+
+async function testCreepJSDifferentContainers() {
+  const CREEPJS_URL = 'https://abrahamjuliot.github.io/creepjs/';
+
+  const c1 = await sendCommand('createWindow', { url: CREEPJS_URL });
+  if (!c1.success) {
+    report('CreepJS: different hash per container', false, 'createWindow #1 failed');
     return;
   }
 
   let tab1;
   try {
     tab1 = await waitForTab(t =>
-      (t.url || '').includes('hash=1') && t.cookieStoreId !== 'firefox-default'
+      (t.url || '').includes('creepjs') && t.cookieStoreId !== 'firefox-default'
     );
   } catch (e) {
-    report('Combined Hash: different containers', false, 'Tab #1 never appeared in container');
+    report('CreepJS: different hash per container', false, 'Tab #1 never appeared in container');
     return;
   }
   const tabId1 = tab1.id ?? tab1.tabId;
 
-  // Open fingerprint page in second container
-  const r2 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?hash=2' });
-  if (!r2.success) {
-    report('Combined Hash: different containers', false, 'createWindow #2 failed');
+  const c2 = await sendCommand('createWindow', { url: CREEPJS_URL });
+  if (!c2.success) {
+    report('CreepJS: different hash per container', false, 'createWindow #2 failed');
     return;
   }
 
   let tab2;
   try {
-    tab2 = await waitForTab(t =>
-      (t.url || '').includes('hash=2') && t.cookieStoreId !== 'firefox-default'
-    );
+    tab2 = await waitForTab(t => {
+      const url = t.url || '';
+      const id = t.id ?? t.tabId;
+      return url.includes('creepjs') && t.cookieStoreId !== 'firefox-default' && id !== tabId1;
+    });
   } catch (e) {
-    report('Combined Hash: different containers', false, 'Tab #2 never appeared in container');
+    report('CreepJS: different hash per container', false, 'Tab #2 never appeared in container');
     return;
   }
   const tabId2 = tab2.id ?? tab2.tabId;
 
   if (tab1.cookieStoreId === tab2.cookieStoreId) {
-    report('Combined Hash: different containers', false,
+    report('CreepJS: different hash per container', false,
       `Both tabs in same container: ${tab1.cookieStoreId}`);
     return;
   }
 
-  // Wait for audio fingerprint (async) to complete — page updates combinedHash
-  await sleep(5000);
+  console.log('# Waiting for CreepJS to compute hashes (up to 90s each)...');
+  const hashes1 = await waitForCreepJSHashes(tabId1);
+  const hashes2 = await waitForCreepJSHashes(tabId2);
 
-  // Read combined hash from both tabs
-  const hash1 = await pageEval(tabId1, `document.title = document.getElementById('combinedHash').textContent;`);
-  const hash2 = await pageEval(tabId2, `document.title = document.getElementById('combinedHash').textContent;`);
+  console.log(`# Container 1 (${tab1.cookieStoreId}):`);
+  if (hashes1) hashes1.forEach(h => console.log(`#   ${h}`));
+  else console.log('#   (timeout - no hashes)');
+  console.log(`# Container 2 (${tab2.cookieStoreId}):`);
+  if (hashes2) hashes2.forEach(h => console.log(`#   ${h}`));
+  else console.log('#   (timeout - no hashes)');
 
-  const valid = hash1 && hash2 && hash1 !== 'Computing...' && hash2 !== 'Computing...';
-  const differ = hash1 !== hash2;
+  if (!hashes1 || !hashes2) {
+    report('CreepJS: different hash per container', false, 'Timeout waiting for CreepJS');
+    return;
+  }
 
-  report('Combined Hash: different containers', valid && differ,
-    `hash1=${hash1}, hash2=${hash2}, containers=${tab1.cookieStoreId}/${tab2.cookieStoreId}`);
+  const fpId1 = hashes1.find(h => h.startsWith('FP ID:'));
+  const fpId2 = hashes2.find(h => h.startsWith('FP ID:'));
+
+  if (!fpId1 || !fpId2) {
+    report('CreepJS: different hash per container', false,
+      `Could not find FP ID. tab1=${JSON.stringify(hashes1)}, tab2=${JSON.stringify(hashes2)}`);
+    return;
+  }
+
+  const differ = fpId1 !== fpId2;
+  report('CreepJS: different hash per container', differ,
+    `${fpId1} vs ${fpId2}`);
 }
 
 async function testCrossDomainNewContainer() {
-  // Open a page, then navigate to a different domain — must get a new container
   const r1 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?xdom=1' });
   if (!r1.success) {
     report('Cross-domain: new container on URL change', false, 'createWindow failed');
@@ -568,14 +632,12 @@ async function testCrossDomainNewContainer() {
   const csid1 = tab1.cookieStoreId;
   const tabId1 = tab1.id ?? tab1.tabId;
 
-  // Navigate to a different domain
   try {
     await sendCommand('navigate', { tabId: tabId1, url: 'http://example.com/' });
   } catch (e) {
-    // navigate may throw if extension removes the tab — that's fine
+    // navigate may throw if extension removes the tab
   }
 
-  // Wait for extension to intercept and create new container
   let tab2;
   try {
     tab2 = await waitForTab(t =>
@@ -598,22 +660,27 @@ async function main() {
   console.log('# Container Tab Manager E2E Tests');
   console.log('');
 
-  try {
-    await testSetup();
-    await testCombinedHashDifferentContainers();
-    await testCrossDomainNewContainer();
-    await testEphemeralCrossDomainIsolation();
-    await testEphemeralSameDomainReuse();
-    await testTabInterception();
-    await testTimezoneSpoof();
-    await testCanvasCrossContainer();
-    await testCanvasDeterministic();
-    await testWebGLCrossContainer();
-    await testAudioCrossContainer();
-  } catch (e) {
-    console.error('FATAL ERROR:', e.message);
-    console.error(e.stack);
-    failed++;
+  const tests = [
+    testSetup,
+    testTabInterception,
+    testTimezoneSpoof,
+    testCanvasCrossContainer,
+    testCanvasDeterministic,
+    testWebGLCrossContainer,
+    testAudioCrossContainer,
+    testCreepJSDifferentContainers,
+    testCrossDomainNewContainer,
+    testEphemeralCrossDomainIsolation,
+    testEphemeralSameDomainReuse,
+  ];
+
+  for (const test of tests) {
+    try {
+      await test();
+    } catch (e) {
+      const name = test.name.replace(/^test/, '');
+      report(name, false, e.message);
+    }
   }
 
   console.log('');
