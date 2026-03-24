@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Clone Claudezilla
-        run: git clone --depth 1 --branch fix/native-messaging-resilience https://x-access-token:${{ secrets.CLAUDEZILLA_TOKEN }}@github.com/AlexeyTuboltsev/claudezilla.git /tmp/claudezilla
+        run: git clone --depth 1 https://x-access-token:${{ secrets.CLAUDEZILLA_TOKEN }}@github.com/AlexeyTuboltsev/claudezilla.git /tmp/claudezilla
 
       - name: Run E2E tests
         env:
