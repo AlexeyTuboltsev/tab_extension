@@ -27,6 +27,16 @@
       </div>
       <p id="provider-error" class="error hidden"></p>
     </section>
+    <section>
+      <h2>Import / Export</h2>
+      <p class="hint">Export saved containers and rules to a file, or import from a previous export.</p>
+      <div class="import-export-actions">
+        <button id="export-btn">Export</button>
+        <button id="import-btn">Import</button>
+        <input type="file" id="import-file" accept=".json" class="hidden">
+      </div>
+      <p id="import-export-status" class="hidden"></p>
+    </section>
   </div>
   <div id="detail-view" class="hidden">
     <div id="detail-form"></div>

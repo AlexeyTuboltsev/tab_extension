@@ -26,6 +26,8 @@ button.btn-danger:hover { background: var(--danger-hover); }
 #detail-form { padding-top: 8px; }
 .error { color: var(--danger-text); font-size: 12px; margin-top: 4px; }
 .hidden { display: none; }
+.import-export-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+.success { color: #51cd00; font-size: 12px; margin-top: 4px; }
 .color-blue { background: #37adff; } .color-turquoise { background: #00c79a; } .color-green { background: #51cd00; }
 .color-yellow { background: #ffcb00; } .color-orange { background: #ff9f00; } .color-red { background: #ff613d; }
 .color-pink { background: #ff4bda; } .color-purple { background: #af51f5; } .color-toolbar { background: #7c7c7d; }

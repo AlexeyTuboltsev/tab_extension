@@ -112,4 +112,39 @@ document.getElementById('add-provider').addEventListener('click', async () => {
 
 document.getElementById('provider-pattern').addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('add-provider').click(); });
 
+document.getElementById('export-btn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('import-export-status');
+  try {
+    const data = await browser.runtime.sendMessage({ type: 'exportData' });
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'ctm-backup.json'; a.click();
+    URL.revokeObjectURL(url);
+    statusEl.textContent = 'Exported successfully.'; statusEl.className = 'success'; statusEl.classList.remove('hidden');
+  } catch (e) {
+    statusEl.textContent = 'Export failed: ' + e.message; statusEl.className = 'error'; statusEl.classList.remove('hidden');
+  }
+});
+
+document.getElementById('import-btn').addEventListener('click', () => {
+  document.getElementById('import-file').click();
+});
+
+document.getElementById('import-file').addEventListener('change', async (e) => {
+  const statusEl = document.getElementById('import-export-status');
+  const file = e.target.files[0]; if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data.saved || !data.globalRules) throw new Error('Invalid backup file');
+    const result = await browser.runtime.sendMessage({ type: 'importData', data });
+    statusEl.textContent = `Imported ${result.imported} containers.`; statusEl.className = 'success'; statusEl.classList.remove('hidden');
+    loadState();
+  } catch (err) {
+    statusEl.textContent = 'Import failed: ' + err.message; statusEl.className = 'error'; statusEl.classList.remove('hidden');
+  }
+  e.target.value = '';
+});
+
 loadState();
