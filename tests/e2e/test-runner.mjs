@@ -538,7 +538,7 @@ async function waitForCreepJSHashes(tabId, timeoutMs = 90000) {
 }
 
 async function testCreepJSDifferentContainers() {
-  const CREEPJS_URL = 'https://abrahamjuliot.github.io/creepjs/';
+  const CREEPJS_URL = 'http://127.0.0.1:8765/creepjs/';
 
   const c1 = await sendCommand('createWindow', { url: CREEPJS_URL });
   if (!c1.success) {
