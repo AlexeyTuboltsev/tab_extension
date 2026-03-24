@@ -115,21 +115,41 @@
 
     if (TZ !== null) {
       // --- Date constructor wrapper ---
-      // Compute real system offset (in ms) for Date.parse adjustment.
-      // Date.parse interprets ambiguous strings with real TZ; we need to shift to spoofed TZ.
+      // Date.parse interprets ambiguous strings (no TZ indicator) using the
+      // system's real timezone. We need to shift to the spoofed TZ.
+      // Use dynamic offset computation via Intl.DateTimeFormat so historical
+      // dates (where offsets differ from modern) are handled correctly.
       var origParse = OrigDate.parse;
-      var REAL_OFFSET_MS = origParse('2026-01-15T00:00:00') - origParse('2026-01-15T00:00:00Z');
-      var SPOOF_OFFSET_MS = TZ_OFFSET * 60000;
-      var PARSE_ADJUST = SPOOF_OFFSET_MS - REAL_OFFSET_MS;
       // Regex: string has explicit timezone → no adjustment needed
       var HAS_TZ_RE = /[Zz]$|[+-]\d{2}:?\d{2}$|\sGMT|\sUTC/;
       // ISO date-only strings (e.g. "2026-03-23") are UTC per ECMA spec — no local component
       var ISO_DATE_ONLY = /^\d{4}(-\d{2}(-\d{2})?)?$/;
 
+      // Compute the real system offset for a given UTC epoch (in ms).
+      // Uses Intl.DateTimeFormat to get the local time in the spoofed TZ,
+      // then compares with the real system's local interpretation.
+      var realTZFmt = new OrigDTF('en-US', {
+        year: 'numeric', month: 'numeric', day: 'numeric',
+        hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false
+      });
+      var spoofTZFmt = new OrigDTF('en-US', {
+        timeZone: TZ,
+        year: 'numeric', month: 'numeric', day: 'numeric',
+        hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false
+      });
+
+      function getParseAdjust(epoch) {
+        // Format the same instant in both real and spoofed TZ, parse back,
+        // compute the difference. This accounts for historical offset changes.
+        var realLocal = origParse(realTZFmt.format(new OrigDate(epoch)));
+        var spoofLocal = origParse(spoofTZFmt.format(new OrigDate(epoch)));
+        return spoofLocal - realLocal;
+      }
+
       function adjustedParse(str) {
         var result = origParse(str);
         if (typeof str === 'string' && !isNaN(result) && !HAS_TZ_RE.test(str) && !ISO_DATE_ONLY.test(str)) {
-          result += PARSE_ADJUST;
+          result += getParseAdjust(result);
         }
         return result;
       }
@@ -176,6 +196,7 @@
         getTimezoneOffset() { return TZ_OFFSET; },
         toString() {
           var utc = this.getTime();
+          if (isNaN(utc)) return 'Invalid Date';
           var local = new OrigDate(utc - TZ_OFFSET * 60000);
           return dayNames[local.getUTCDay()] + ' ' + monthNames[local.getUTCMonth()] + ' ' +
             pad(local.getUTCDate()) + ' ' + local.getUTCFullYear() + ' ' +
@@ -183,11 +204,13 @@
             pad(local.getUTCSeconds()) + ' ' + GMT_STRING + ' (' + TZ_LONG_NAME + ')';
         },
         toTimeString() {
+          if (isNaN(this.getTime())) return 'Invalid Date';
           var local = new OrigDate(this.getTime() - TZ_OFFSET * 60000);
           return pad(local.getUTCHours()) + ':' + pad(local.getUTCMinutes()) + ':' +
             pad(local.getUTCSeconds()) + ' ' + GMT_STRING + ' (' + TZ_LONG_NAME + ')';
         },
         toDateString() {
+          if (isNaN(this.getTime())) return 'Invalid Date';
           var local = new OrigDate(this.getTime() - TZ_OFFSET * 60000);
           return dayNames[local.getUTCDay()] + ' ' + monthNames[local.getUTCMonth()] + ' ' +
             pad(local.getUTCDate()) + ' ' + local.getUTCFullYear();
@@ -262,13 +285,22 @@
         var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
         var wOrigParse = OrigDate.parse;
-        var wRealOffMs = wOrigParse('2026-01-15T00:00:00') - wOrigParse('2026-01-15T00:00:00Z');
-        var wParseAdj = TZ_OFFSET * 60000 - wRealOffMs;
         var wHasTz = /[Zz]$|[+-]\d{2}:?\d{2}$|\sGMT|\sUTC/;
         var wIsoDateOnly = /^\d{4}(-\d{2}(-\d{2})?)?$/;
+        var wRealFmt = new OrigDTF('en-US', {
+          year:'numeric',month:'numeric',day:'numeric',
+          hour:'numeric',minute:'numeric',second:'numeric',hour12:false
+        });
+        var wSpoofFmt = new OrigDTF('en-US', {
+          timeZone: TZ, year:'numeric',month:'numeric',day:'numeric',
+          hour:'numeric',minute:'numeric',second:'numeric',hour12:false
+        });
+        function wGetAdj(epoch) {
+          return wOrigParse(wSpoofFmt.format(new OrigDate(epoch))) - wOrigParse(wRealFmt.format(new OrigDate(epoch)));
+        }
         function wAdjParse(str) {
           var r = wOrigParse(str);
-          if (typeof str === 'string' && !isNaN(r) && !wHasTz.test(str) && !wIsoDateOnly.test(str)) r += wParseAdj;
+          if (typeof str === 'string' && !isNaN(r) && !wHasTz.test(str) && !wIsoDateOnly.test(str)) r += wGetAdj(r);
           return r;
         }
 
@@ -303,6 +335,7 @@
           getSeconds() { return new OrigDate(this.getTime() - TZ_OFFSET * 60000).getUTCSeconds(); },
           getMilliseconds() { return new OrigDate(this.getTime() - TZ_OFFSET * 60000).getUTCMilliseconds(); },
           toString() {
+            if (isNaN(this.getTime())) return 'Invalid Date';
             var local = new OrigDate(this.getTime() - TZ_OFFSET * 60000);
             return days[local.getUTCDay()] + ' ' + months[local.getUTCMonth()] + ' ' +
               pad(local.getUTCDate()) + ' ' + local.getUTCFullYear() + ' ' +
@@ -310,11 +343,13 @@
               pad(local.getUTCSeconds()) + ' ' + GMT_STRING + ' (' + TZ_LONG_NAME + ')';
           },
           toTimeString() {
+            if (isNaN(this.getTime())) return 'Invalid Date';
             var local = new OrigDate(this.getTime() - TZ_OFFSET * 60000);
             return pad(local.getUTCHours()) + ':' + pad(local.getUTCMinutes()) + ':' +
               pad(local.getUTCSeconds()) + ' ' + GMT_STRING + ' (' + TZ_LONG_NAME + ')';
           },
           toDateString() {
+            if (isNaN(this.getTime())) return 'Invalid Date';
             var local = new OrigDate(this.getTime() - TZ_OFFSET * 60000);
             return days[local.getUTCDay()] + ' ' + months[local.getUTCMonth()] + ' ' +
               pad(local.getUTCDate()) + ' ' + local.getUTCFullYear();
