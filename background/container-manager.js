@@ -60,13 +60,15 @@ const ContainerManager = (() => {
     const allTabs = await browser.tabs.query({});
     for (const tab of allTabs) trackTab(tab.id, tab.cookieStoreId, tab.openerTabId, tab.url);
     for (const csId of [...ephemeralSet]) { if (getContainerTabCount(csId) === 0) await destroyEphemeral(csId); }
-    const saved = data[STORAGE_KEYS.SAVED_CONTAINERS] || {};
-    const savedCookieStoreIds = new Set(Object.values(saved).map(s => s.cookieStoreId));
+    // Clean up orphaned ephemeral containers (e.g., from a crash).
+    // Only remove containers matching our ephemeral naming pattern — never
+    // touch saved containers, built-in containers, or other extensions' containers.
     const allContainers = await browser.contextualIdentities.query({});
     for (const container of allContainers) {
-      if (savedCookieStoreIds.has(container.cookieStoreId)) continue;
+      if (!container.name.startsWith(EPHEMERAL_PREFIX)) continue;
+      if (ephemeralSet.has(container.cookieStoreId)) continue;
       if (getContainerTabCount(container.cookieStoreId) > 0) continue;
-      try { await browser.contextualIdentities.remove(container.cookieStoreId); console.log('Cleaned up container:', container.name); } catch (e) {}
+      try { await browser.contextualIdentities.remove(container.cookieStoreId); console.log('Cleaned up orphaned ephemeral:', container.name); } catch (e) {}
     }
   }
   function getState() {
