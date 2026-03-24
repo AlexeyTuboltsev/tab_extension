@@ -34,7 +34,7 @@ async function loadProfiles() {
       if (ipInfo.country) ContainerEnv.setCountry(ipInfo.country);
     }
     IpTimezone.onChange((info) => {
-      console.log('[TZ] IP changed — updating timezone to', info.timezone);
+      console.log('[TZ] IP changed \u2014 updating timezone to', info.timezone);
       ContainerEnv.updateTimezone(info.timezone);
       if (info.country) ContainerEnv.setCountry(info.country);
     });
@@ -195,6 +195,59 @@ async function handleMessage(message, sender) {
       const tab = await browser.tabs.get(message.tabId);
       await browser.windows.update(tab.windowId, { focused: true });
       return {};
+    }
+    case 'exportData': {
+      const saved = await StorageManager.getSavedContainers();
+      const globalRules = await StorageManager.getGlobalRules();
+      const containerRules = await StorageManager.getContainerRules();
+      const provData = await browser.storage.local.get(STORAGE_KEYS.SHARED_PROVIDERS);
+      const sharedProviders = provData[STORAGE_KEYS.SHARED_PROVIDERS] || null;
+      return { saved, globalRules, containerRules, sharedProviders };
+    }
+    case 'importData': {
+      const { saved, globalRules, containerRules, sharedProviders } = message.data;
+      // Re-map cookieStoreIds: match containers by name since IDs change across installs
+      const identities = await browser.contextualIdentities.query({});
+      const nameToIdentity = {};
+      for (const id of identities) nameToIdentity[id.name] = id;
+      const idRemap = {}; // old savedContainerId -> new savedContainerId
+      const newSaved = {};
+      for (const [oldScId, sc] of Object.entries(saved)) {
+        const identity = nameToIdentity[sc.name];
+        if (!identity) {
+          // Container doesn't exist \u2014 create it
+          const created = await browser.contextualIdentities.create({ name: sc.name, color: sc.color, icon: sc.icon });
+          const newScId = 'sc_import_' + created.cookieStoreId;
+          newSaved[newScId] = { cookieStoreId: created.cookieStoreId, name: sc.name, color: created.color, icon: created.icon };
+          idRemap[oldScId] = newScId;
+        } else {
+          const newScId = 'sc_import_' + identity.cookieStoreId;
+          newSaved[newScId] = { cookieStoreId: identity.cookieStoreId, name: sc.name, color: identity.color, icon: identity.icon };
+          idRemap[oldScId] = newScId;
+        }
+      }
+      await StorageManager.setSavedContainers(newSaved);
+      // Remap global rules
+      const newGlobal = globalRules.map(r => ({
+        id: 'gr_import_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        pattern: r.pattern,
+        savedContainerId: idRemap[r.savedContainerId] || r.savedContainerId,
+      }));
+      await StorageManager.setGlobalRules(newGlobal);
+      // Remap container rules
+      const newContainerRules = {};
+      for (const [oldScId, rules] of Object.entries(containerRules)) {
+        const newScId = idRemap[oldScId] || oldScId;
+        newContainerRules[newScId] = rules.map(r => ({
+          id: 'cr_import_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          pattern: r.pattern,
+        }));
+      }
+      await StorageManager.setContainerRules(newContainerRules);
+      if (sharedProviders) {
+        await browser.storage.local.set({ [STORAGE_KEYS.SHARED_PROVIDERS]: sharedProviders });
+      }
+      return { imported: Object.keys(newSaved).length };
     }
     default: console.warn('Unknown message type:', message.type); return {};
   }
