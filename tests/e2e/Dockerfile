@@ -1,7 +1,7 @@
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y \
-    curl ca-certificates python3 bzip2 \
+    curl ca-certificates python3 bzip2 git \
     libgtk-3-0 libdbus-glib-1-2 libxt6 libasound2t64 \
     libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0 libcairo2 \
     libatk1.0-0 libatk-bridge2.0-0 libxcursor1 libxi6 \
@@ -42,6 +42,11 @@ COPY options/ /app/extension/options/
 COPY icons/ /app/extension/icons/
 COPY data/ /app/extension/data/
 COPY fingerprint-check.html /app/extension/
+
+# Fetch CreepJS for local serving (no external network dependency at test time)
+RUN git clone --depth 1 https://github.com/AbrahamJuliot/creepjs.git /tmp/creepjs && \
+    cp -r /tmp/creepjs/docs /app/extension/creepjs && \
+    rm -rf /tmp/creepjs
 
 # Copy test files
 COPY tests/e2e/ /app/tests/e2e/
