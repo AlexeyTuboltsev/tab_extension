@@ -54,8 +54,26 @@
     var nativeFns = new Map();
     var origToString = Function.prototype.toString;
     // Cross-realm symbol: Symbol.for() returns the SAME symbol in every realm,
-    // so toString can identify patched functions even across iframe boundaries.
-    var CTM_NATIVE = Symbol.for('__ctm_n');
+    // so iframe content scripts can find the parent frame's nativeFns Map.
+    var CTM_MAP = Symbol.for('__ctm_nfm');
+
+    // Expose nativeFns on window so child iframe content scripts can find it.
+    // Non-enumerable, non-configurable — page scripts would need the exact symbol to find it.
+    try { Object.defineProperty(window, CTM_MAP, { value: nativeFns, enumerable: false, configurable: false }); } catch (e) {}
+
+    // Cross-frame lookup: walk up the frame tree to find a function's label
+    function crossFrameLookup(fn) {
+      try {
+        var w = window.parent;
+        while (w && w !== window) {
+          var map = w[CTM_MAP];
+          if (map && map.has(fn)) return map.get(fn);
+          if (w === w.parent) break;
+          w = w.parent;
+        }
+      } catch (e) {}
+      return null;
+    }
 
     // Helper: install a method on a prototype, matching native property descriptors
     function defMethod(obj, name, fn) {
@@ -66,8 +84,6 @@
         enumerable: false
       });
       nativeFns.set(fn, name);
-      // Mark function with cross-realm symbol for cross-iframe toString calls
-      try { Object.defineProperty(fn, CTM_NATIVE, { value: name, configurable: false, enumerable: false }); } catch (e) {}
     }
 
     // Patch Function.prototype.toString (method shorthand = non-constructable)
@@ -76,8 +92,8 @@
         if (nativeFns.has(this)) {
           return 'function ' + nativeFns.get(this) + '() {\n    [native code]\n}';
         }
-        // Cross-realm fallback: check for the global symbol marker
-        var crossName = this[CTM_NATIVE];
+        // Cross-realm fallback: check parent frames' Maps
+        var crossName = crossFrameLookup(this);
         if (crossName) {
           return 'function ' + crossName + '() {\n    [native code]\n}';
         }
@@ -93,7 +109,7 @@
           if (nativeFns.has(this)) {
             return 'function ' + nativeFns.get(this) + '() {\n    [native code]\n}';
           }
-          var crossName = this[CTM_NATIVE];
+          var crossName = crossFrameLookup(this);
           if (crossName) {
             return 'function ' + crossName + '() {\n    [native code]\n}';
           }
@@ -115,21 +131,41 @@
 
     if (TZ !== null) {
       // --- Date constructor wrapper ---
-      // Compute real system offset (in ms) for Date.parse adjustment.
-      // Date.parse interprets ambiguous strings with real TZ; we need to shift to spoofed TZ.
+      // Date.parse interprets ambiguous strings (no TZ indicator) using the
+      // system's real timezone. We need to shift to the spoofed TZ.
+      // Use dynamic offset computation via Intl.DateTimeFormat so historical
+      // dates (where offsets differ from modern) are handled correctly.
       var origParse = OrigDate.parse;
-      var REAL_OFFSET_MS = origParse('2026-01-15T00:00:00') - origParse('2026-01-15T00:00:00Z');
-      var SPOOF_OFFSET_MS = TZ_OFFSET * 60000;
-      var PARSE_ADJUST = SPOOF_OFFSET_MS - REAL_OFFSET_MS;
       // Regex: string has explicit timezone → no adjustment needed
       var HAS_TZ_RE = /[Zz]$|[+-]\d{2}:?\d{2}$|\sGMT|\sUTC/;
       // ISO date-only strings (e.g. "2026-03-23") are UTC per ECMA spec — no local component
       var ISO_DATE_ONLY = /^\d{4}(-\d{2}(-\d{2})?)?$/;
 
+      // Compute the real system offset for a given UTC epoch (in ms).
+      // Uses Intl.DateTimeFormat to get the local time in the spoofed TZ,
+      // then compares with the real system's local interpretation.
+      var realTZFmt = new OrigDTF('en-US', {
+        year: 'numeric', month: 'numeric', day: 'numeric',
+        hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false
+      });
+      var spoofTZFmt = new OrigDTF('en-US', {
+        timeZone: TZ,
+        year: 'numeric', month: 'numeric', day: 'numeric',
+        hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: false
+      });
+
+      function getParseAdjust(epoch) {
+        // Format the same instant in both real and spoofed TZ, parse back,
+        // compute the difference. This accounts for historical offset changes.
+        var realLocal = origParse(realTZFmt.format(new OrigDate(epoch)));
+        var spoofLocal = origParse(spoofTZFmt.format(new OrigDate(epoch)));
+        return spoofLocal - realLocal;
+      }
+
       function adjustedParse(str) {
         var result = origParse(str);
         if (typeof str === 'string' && !isNaN(result) && !HAS_TZ_RE.test(str) && !ISO_DATE_ONLY.test(str)) {
-          result += PARSE_ADJUST;
+          result += getParseAdjust(result);
         }
         return result;
       }
@@ -176,6 +212,7 @@
         getTimezoneOffset() { return TZ_OFFSET; },
         toString() {
           var utc = this.getTime();
+          if (isNaN(utc)) return 'Invalid Date';
           var local = new OrigDate(utc - TZ_OFFSET * 60000);
           return dayNames[local.getUTCDay()] + ' ' + monthNames[local.getUTCMonth()] + ' ' +
             pad(local.getUTCDate()) + ' ' + local.getUTCFullYear() + ' ' +
@@ -183,11 +220,13 @@
             pad(local.getUTCSeconds()) + ' ' + GMT_STRING + ' (' + TZ_LONG_NAME + ')';
         },
         toTimeString() {
+          if (isNaN(this.getTime())) return 'Invalid Date';
           var local = new OrigDate(this.getTime() - TZ_OFFSET * 60000);
           return pad(local.getUTCHours()) + ':' + pad(local.getUTCMinutes()) + ':' +
             pad(local.getUTCSeconds()) + ' ' + GMT_STRING + ' (' + TZ_LONG_NAME + ')';
         },
         toDateString() {
+          if (isNaN(this.getTime())) return 'Invalid Date';
           var local = new OrigDate(this.getTime() - TZ_OFFSET * 60000);
           return dayNames[local.getUTCDay()] + ' ' + monthNames[local.getUTCMonth()] + ' ' +
             pad(local.getUTCDate()) + ' ' + local.getUTCFullYear();
@@ -262,13 +301,22 @@
         var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
         var wOrigParse = OrigDate.parse;
-        var wRealOffMs = wOrigParse('2026-01-15T00:00:00') - wOrigParse('2026-01-15T00:00:00Z');
-        var wParseAdj = TZ_OFFSET * 60000 - wRealOffMs;
         var wHasTz = /[Zz]$|[+-]\d{2}:?\d{2}$|\sGMT|\sUTC/;
         var wIsoDateOnly = /^\d{4}(-\d{2}(-\d{2})?)?$/;
+        var wRealFmt = new OrigDTF('en-US', {
+          year:'numeric',month:'numeric',day:'numeric',
+          hour:'numeric',minute:'numeric',second:'numeric',hour12:false
+        });
+        var wSpoofFmt = new OrigDTF('en-US', {
+          timeZone: TZ, year:'numeric',month:'numeric',day:'numeric',
+          hour:'numeric',minute:'numeric',second:'numeric',hour12:false
+        });
+        function wGetAdj(epoch) {
+          return wOrigParse(wSpoofFmt.format(new OrigDate(epoch))) - wOrigParse(wRealFmt.format(new OrigDate(epoch)));
+        }
         function wAdjParse(str) {
           var r = wOrigParse(str);
-          if (typeof str === 'string' && !isNaN(r) && !wHasTz.test(str) && !wIsoDateOnly.test(str)) r += wParseAdj;
+          if (typeof str === 'string' && !isNaN(r) && !wHasTz.test(str) && !wIsoDateOnly.test(str)) r += wGetAdj(r);
           return r;
         }
 
@@ -303,6 +351,7 @@
           getSeconds() { return new OrigDate(this.getTime() - TZ_OFFSET * 60000).getUTCSeconds(); },
           getMilliseconds() { return new OrigDate(this.getTime() - TZ_OFFSET * 60000).getUTCMilliseconds(); },
           toString() {
+            if (isNaN(this.getTime())) return 'Invalid Date';
             var local = new OrigDate(this.getTime() - TZ_OFFSET * 60000);
             return days[local.getUTCDay()] + ' ' + months[local.getUTCMonth()] + ' ' +
               pad(local.getUTCDate()) + ' ' + local.getUTCFullYear() + ' ' +
@@ -310,11 +359,13 @@
               pad(local.getUTCSeconds()) + ' ' + GMT_STRING + ' (' + TZ_LONG_NAME + ')';
           },
           toTimeString() {
+            if (isNaN(this.getTime())) return 'Invalid Date';
             var local = new OrigDate(this.getTime() - TZ_OFFSET * 60000);
             return pad(local.getUTCHours()) + ':' + pad(local.getUTCMinutes()) + ':' +
               pad(local.getUTCSeconds()) + ' ' + GMT_STRING + ' (' + TZ_LONG_NAME + ')';
           },
           toDateString() {
+            if (isNaN(this.getTime())) return 'Invalid Date';
             var local = new OrigDate(this.getTime() - TZ_OFFSET * 60000);
             return days[local.getUTCDay()] + ' ' + months[local.getUTCMonth()] + ' ' +
               pad(local.getUTCDate()) + ' ' + local.getUTCFullYear();
@@ -540,14 +591,29 @@
 
     var prof = cfg ? cfg.prof : null;
     if (prof) {
-      // Helper: install a getter on a prototype, matching native accessor descriptors
-      function defGetter(obj, name, getterFn) {
+      // Helper: install a getter on a prototype, matching native accessor descriptors.
+      // Uses method shorthand to create non-constructable functions without .prototype,
+      // and validates `this` to throw TypeError on prototype access (like native getters).
+      function defGetter(obj, name, valueFn, instance) {
+        // Save the original getter so we can trigger its native TypeError
+        var origDesc = Object.getOwnPropertyDescriptor(obj, name);
+        var origGetter = origDesc && origDesc.get;
+        // Method shorthand: non-constructable, no .prototype property
+        var getter = { [name]() {
+          // Native getters throw TypeError when called on the prototype itself.
+          // Validate: `this` must be an instance, not the prototype.
+          if (instance && this === obj) {
+            // Trigger the original native getter's TypeError if available
+            if (origGetter) return origGetter.call(this);
+            throw new TypeError("'get " + name + "' called on an object that does not implement interface");
+          }
+          return valueFn();
+        }}[name];
         Object.defineProperty(obj, name, {
-          get: getterFn, set: undefined, configurable: true, enumerable: true
+          get: getter, set: undefined, configurable: true, enumerable: true
         });
         var label = 'get ' + name;
-        nativeFns.set(getterFn, label);
-        try { Object.defineProperty(getterFn, CTM_NATIVE, { value: label, configurable: false, enumerable: false }); } catch (e) {}
+        nativeFns.set(getter, label);
       }
 
       // --- Navigator properties ---
@@ -555,21 +621,21 @@
 
       if (prof.platform) {
         var platVal = prof.platform;
-        defGetter(navProto, 'platform', function() { return platVal; });
+        defGetter(navProto, 'platform', function() { return platVal; }, navigator);
       }
       if (prof.hardwareConcurrency) {
         var hcVal = prof.hardwareConcurrency;
-        defGetter(navProto, 'hardwareConcurrency', function() { return hcVal; });
+        defGetter(navProto, 'hardwareConcurrency', function() { return hcVal; }, navigator);
       }
       if (prof.deviceMemory) {
         var dmVal = prof.deviceMemory;
-        defGetter(navProto, 'deviceMemory', function() { return dmVal; });
+        defGetter(navProto, 'deviceMemory', function() { return dmVal; }, navigator);
       }
       if (prof.languages) {
         var langVal = prof.languages;
         var langFirst = langVal[0] || 'en-US';
-        defGetter(navProto, 'languages', function() { return Object.freeze(langVal.slice()); });
-        defGetter(navProto, 'language', function() { return langFirst; });
+        defGetter(navProto, 'languages', function() { return Object.freeze(langVal.slice()); }, navigator);
+        defGetter(navProto, 'language', function() { return langFirst; }, navigator);
       }
 
       // --- Screen properties ---
@@ -579,15 +645,15 @@
         var sw = prof.screen[0], sh = prof.screen[1];
         var taskbar = prof.platform === 'MacIntel' ? 25 : 40;
         var ah = sh - taskbar;
-        defGetter(screenProto, 'width', function() { return sw; });
-        defGetter(screenProto, 'height', function() { return sh; });
-        defGetter(screenProto, 'availWidth', function() { return sw; });
-        defGetter(screenProto, 'availHeight', function() { return ah; });
+        defGetter(screenProto, 'width', function() { return sw; }, screen);
+        defGetter(screenProto, 'height', function() { return sh; }, screen);
+        defGetter(screenProto, 'availWidth', function() { return sw; }, screen);
+        defGetter(screenProto, 'availHeight', function() { return ah; }, screen);
       }
       if (prof.colorDepth) {
         var cdVal = prof.colorDepth;
-        defGetter(screenProto, 'colorDepth', function() { return cdVal; });
-        defGetter(screenProto, 'pixelDepth', function() { return cdVal; });
+        defGetter(screenProto, 'colorDepth', function() { return cdVal; }, screen);
+        defGetter(screenProto, 'pixelDepth', function() { return cdVal; }, screen);
       }
 
       // --- window.devicePixelRatio ---

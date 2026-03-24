@@ -612,6 +612,175 @@ async function testCreepJSDifferentContainers() {
     `${fpId1} vs ${fpId2}`);
 }
 
+async function testCreepJSPrototypeLies() {
+  const PROTO_URL = 'http://127.0.0.1:8765/creepjs/tests/prototype.html';
+  const r = await sendCommand('createWindow', { url: PROTO_URL });
+  if (!r.success) {
+    report('CreepJS: 0 prototype lies', false, 'createWindow failed');
+    return;
+  }
+
+  let tab;
+  try {
+    tab = await waitForTab(t =>
+      (t.url || '').includes('prototype.html') && t.cookieStoreId !== 'firefox-default'
+    );
+  } catch (e) {
+    report('CreepJS: 0 prototype lies', false, 'Tab never appeared in container');
+    return;
+  }
+  const tabId = tab.id ?? tab.tabId;
+
+  // Wait for #fingerprint-data to appear (prototype test is fast, ~300ms)
+  const start = Date.now();
+  let resultText = null;
+  while (Date.now() - start < 30000) {
+    const evalR = await sendCommand('evaluate', {
+      tabId,
+      expression: `(() => {
+        const el = document.querySelector('#fingerprint-data');
+        if (!el) return null;
+        return el.textContent;
+      })()`
+    });
+    const val = evalR.result?.result;
+    if (val && /lies detected/.test(val)) {
+      resultText = val;
+      break;
+    }
+    await sleep(1000);
+  }
+
+  if (!resultText) {
+    report('CreepJS: 0 prototype lies', false, 'Timeout waiting for prototype results');
+    return;
+  }
+
+  const liesMatch = resultText.match(/(\d+)\s+lies?\s+detected/);
+  const lieCount = liesMatch ? parseInt(liesMatch[1], 10) : -1;
+
+  // Also check for .fail spans (individual lie entries)
+  const failR = await sendCommand('evaluate', {
+    tabId,
+    expression: `(() => {
+      const fails = document.querySelectorAll('#fingerprint-data .fail');
+      return Array.from(fails).map(el => {
+        const parent = el.closest('div');
+        return parent ? parent.textContent.trim() : el.textContent.trim();
+      });
+    })()`
+  });
+  const failEntries = failR.result?.result || [];
+
+  if (lieCount === 0 && failEntries.length === 0) {
+    report('CreepJS: 0 prototype lies', true,
+      `0 lies in ${resultText.match(/in (\d+) properties/)?.[1] || '?'} properties`);
+  } else {
+    const detail = `${lieCount} lies detected` +
+      (failEntries.length ? '. Failures: ' + failEntries.slice(0, 5).join('; ') : '');
+    report('CreepJS: 0 prototype lies', false, detail);
+  }
+}
+
+async function testCreepJSTimezone() {
+  const TZ_URL = 'http://127.0.0.1:8765/creepjs/tests/timezone.html';
+  const r = await sendCommand('createWindow', { url: TZ_URL });
+  if (!r.success) {
+    report('CreepJS: timezone consistency', false, 'createWindow failed');
+    return;
+  }
+
+  let tab;
+  try {
+    tab = await waitForTab(t =>
+      (t.url || '').includes('timezone.html') && t.cookieStoreId !== 'firefox-default'
+    );
+  } catch (e) {
+    report('CreepJS: timezone consistency', false, 'Tab never appeared in container');
+    return;
+  }
+  const tabId = tab.id ?? tab.tabId;
+
+  // Wait for timezone results
+  const start = Date.now();
+  let resultHtml = null;
+  while (Date.now() - start < 30000) {
+    const evalR = await sendCommand('evaluate', {
+      tabId,
+      expression: `(() => {
+        const el = document.querySelector('#fingerprint-data');
+        if (!el) return null;
+        const text = el.textContent;
+        if (text.includes('epoch time') || text.includes('Invalid')) return el.innerHTML;
+        return null;
+      })()`
+    });
+    const val = evalR.result?.result;
+    if (val) {
+      resultHtml = val;
+      break;
+    }
+    await sleep(1000);
+  }
+
+  if (!resultHtml) {
+    report('CreepJS: timezone consistency', false, 'Timeout waiting for timezone results');
+    return;
+  }
+
+  // Critical: no "Invalid Date" anywhere
+  const hasInvalidDate = /Invalid Date/i.test(resultHtml);
+  if (hasInvalidDate) {
+    report('CreepJS: timezone no Invalid Date', false,
+      'Found "Invalid Date" in timezone output');
+    return;
+  }
+  report('CreepJS: timezone no Invalid Date', true);
+
+  // Epoch times should all match (consistent across Date methods)
+  const evalEpoch = await sendCommand('evaluate', {
+    tabId,
+    expression: `(() => {
+      const groups = document.querySelectorAll('#fingerprint-data .group');
+      const results = {};
+      for (const g of groups) {
+        const lines = Array.from(g.querySelectorAll('div')).map(d => d.textContent.trim());
+        const epochLines = lines.filter(l => /^\\d{13}/.test(l));
+        if (epochLines.length > 1) {
+          const vals = epochLines.map(l => l.split(' ')[0]);
+          results.epochConsistent = new Set(vals).size === 1;
+          results.epochValues = vals;
+        }
+        const utcLines = lines.filter(l => /^\\d{4}-\\d{2}-\\d{2}T/.test(l));
+        if (utcLines.length > 1) {
+          const vals = utcLines.map(l => l.split(' ')[0]);
+          results.utcConsistent = new Set(vals).size === 1;
+          results.utcValues = vals;
+        }
+      }
+      return JSON.stringify(results);
+    })()`
+  });
+
+  try {
+    const data = JSON.parse(evalEpoch.result?.result || '{}');
+
+    if (data.epochConsistent !== undefined) {
+      report('CreepJS: timezone epoch consistency', data.epochConsistent,
+        data.epochConsistent ? 'All epoch methods agree' :
+        'Epoch mismatch: ' + (data.epochValues || []).join(', '));
+    }
+
+    if (data.utcConsistent !== undefined) {
+      report('CreepJS: timezone UTC consistency', data.utcConsistent,
+        data.utcConsistent ? 'All UTC methods agree' :
+        'UTC mismatch: ' + (data.utcValues || []).join(', '));
+    }
+  } catch (e) {
+    report('CreepJS: timezone epoch consistency', false, 'Parse error: ' + e.message);
+  }
+}
+
 async function testCrossDomainNewContainer() {
   const r1 = await sendCommand('createWindow', { url: 'http://127.0.0.1:8765/fingerprint-check.html?xdom=1' });
   if (!r1.success) {
@@ -668,6 +837,8 @@ async function main() {
     testCanvasDeterministic,
     testWebGLCrossContainer,
     testAudioCrossContainer,
+    testCreepJSPrototypeLies,
+    testCreepJSTimezone,
     testCreepJSDifferentContainers,
     testCrossDomainNewContainer,
     testEphemeralCrossDomainIsolation,
