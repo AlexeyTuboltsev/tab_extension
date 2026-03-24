@@ -555,21 +555,21 @@
 
       if (prof.platform) {
         var platVal = prof.platform;
-        defGetter(navProto, 'platform', { get platform() { return platVal; } }.platform);
+        defGetter(navProto, 'platform', function() { return platVal; });
       }
       if (prof.hardwareConcurrency) {
         var hcVal = prof.hardwareConcurrency;
-        defGetter(navProto, 'hardwareConcurrency', { get hardwareConcurrency() { return hcVal; } }.hardwareConcurrency);
+        defGetter(navProto, 'hardwareConcurrency', function() { return hcVal; });
       }
       if (prof.deviceMemory) {
         var dmVal = prof.deviceMemory;
-        defGetter(navProto, 'deviceMemory', { get deviceMemory() { return dmVal; } }.deviceMemory);
+        defGetter(navProto, 'deviceMemory', function() { return dmVal; });
       }
       if (prof.languages) {
         var langVal = prof.languages;
         var langFirst = langVal[0] || 'en-US';
-        defGetter(navProto, 'languages', { get languages() { return Object.freeze(langVal.slice()); } }.languages);
-        defGetter(navProto, 'language', { get language() { return langFirst; } }.language);
+        defGetter(navProto, 'languages', function() { return Object.freeze(langVal.slice()); });
+        defGetter(navProto, 'language', function() { return langFirst; });
       }
 
       // --- Screen properties ---
@@ -579,21 +579,21 @@
         var sw = prof.screen[0], sh = prof.screen[1];
         var taskbar = prof.platform === 'MacIntel' ? 25 : 40;
         var ah = sh - taskbar;
-        defGetter(screenProto, 'width', { get width() { return sw; } }.width);
-        defGetter(screenProto, 'height', { get height() { return sh; } }.height);
-        defGetter(screenProto, 'availWidth', { get availWidth() { return sw; } }.availWidth);
-        defGetter(screenProto, 'availHeight', { get availHeight() { return ah; } }.availHeight);
+        defGetter(screenProto, 'width', function() { return sw; });
+        defGetter(screenProto, 'height', function() { return sh; });
+        defGetter(screenProto, 'availWidth', function() { return sw; });
+        defGetter(screenProto, 'availHeight', function() { return ah; });
       }
       if (prof.colorDepth) {
         var cdVal = prof.colorDepth;
-        defGetter(screenProto, 'colorDepth', { get colorDepth() { return cdVal; } }.colorDepth);
-        defGetter(screenProto, 'pixelDepth', { get pixelDepth() { return cdVal; } }.pixelDepth);
+        defGetter(screenProto, 'colorDepth', function() { return cdVal; });
+        defGetter(screenProto, 'pixelDepth', function() { return cdVal; });
       }
 
       // --- window.devicePixelRatio ---
       if (prof.pixelRatio) {
         var dprVal = prof.pixelRatio;
-        defGetter(window, 'devicePixelRatio', { get devicePixelRatio() { return dprVal; } }.devicePixelRatio);
+        defGetter(window, 'devicePixelRatio', function() { return dprVal; });
       }
 
       // NOTE: WebGL vendor/renderer spoofing removed — it creates a detectable
