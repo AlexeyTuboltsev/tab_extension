@@ -44,10 +44,11 @@ const ContainerManager = (() => {
   function managedAdd(tabId) { managedTabs.add(tabId); }
   function clearManaged(tabId) { managedTabs.delete(tabId); }
   async function saveEphemeral(cookieStoreId, name, color, icon) {
-    if (!ephemeralSet.has(cookieStoreId)) return null;
     const savedId = 'sc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     await browser.contextualIdentities.update(cookieStoreId, { name, color, icon });
-    ephemeralSet.delete(cookieStoreId); await StorageManager.removeEphemeralContainer(cookieStoreId);
+    if (ephemeralSet.has(cookieStoreId)) {
+      ephemeralSet.delete(cookieStoreId); await StorageManager.removeEphemeralContainer(cookieStoreId);
+    }
     await StorageManager.addSavedContainer(savedId, { cookieStoreId, name, color, icon }); return savedId;
   }
   function lookupSavedIdByCookieStore(cookieStoreId, savedContainers) {
@@ -61,7 +62,7 @@ const ContainerManager = (() => {
     for (const tab of allTabs) trackTab(tab.id, tab.cookieStoreId, tab.openerTabId, tab.url);
     for (const csId of [...ephemeralSet]) { if (getContainerTabCount(csId) === 0) await destroyEphemeral(csId); }
     // Clean up orphaned ephemeral containers (e.g., from a crash).
-    // Only remove containers matching our ephemeral naming pattern — never
+    // Only remove containers matching our ephemeral naming pattern \u2014 never
     // touch saved containers, built-in containers, or other extensions' containers.
     const allContainers = await browser.contextualIdentities.query({});
     for (const container of allContainers) {
